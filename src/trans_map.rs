@@ -6,8 +6,9 @@ use crate::dns_packet::PacketId;
 #[derive(Clone, Copy)]
 pub struct Transaction {
     pub addr: SocketAddr,
-    pub id: PacketId,
     pub hash: u64,
+    pub created_at_ms: u32,
+    pub id: PacketId,
 }
 
 pub struct TransactionMap {
@@ -39,6 +40,27 @@ impl TransactionMap {
         Some(origin)
     }
 
+    pub fn expire_older_than(&mut self, now_ms: u32, max_age_ms: u32) -> usize {
+        let mut count = 0usize;
+
+        for c in 0..BITMAP_CHUNKS {
+            let mut chunk = self.occupancy.chunk(c);
+            while chunk != 0 {
+                let occupied_bit = chunk.trailing_zeros() as usize;
+                chunk &= chunk - 1; // cut visited bit
+
+                let trans_index = OccupancyBitmap::index(c, occupied_bit);
+                let trans = self.read_ref(trans_index);
+                if Self::is_expired(trans, now_ms, max_age_ms) {
+                    self.occupancy.set_free(trans_index);
+                    count += 1;
+                }
+            }
+        }
+
+        count
+    }
+
     fn write(&mut self, index: usize, origin: Transaction) {
         unsafe {
             self.origins.get_unchecked_mut(index).write(origin);
@@ -49,6 +71,16 @@ impl TransactionMap {
         unsafe {
             self.origins.get_unchecked(index).assume_init_read()
         }
+    }
+
+    fn read_ref(&self, index: usize) -> &Transaction {
+        unsafe {
+            self.origins.get_unchecked(index).assume_init_ref()
+        }
+    }
+
+    fn is_expired(trans: &Transaction, now_ms: u32, max_age_ms: u32) -> bool {
+        now_ms.wrapping_sub(trans.created_at_ms) > max_age_ms
     }
 }
 
@@ -70,7 +102,7 @@ struct BitIndex {
 }
 
 impl OccupancyBitmap {
-    pub fn new() -> Self {
+    fn new() -> Self {
         Self {
             cursor: 0,
             chunks: [0; BITMAP_CHUNKS],
@@ -78,14 +110,14 @@ impl OccupancyBitmap {
     }
 
     #[inline(always)]
-    pub fn use_free(&mut self) -> Option<usize> {
+    fn use_free(&mut self) -> Option<usize> {
         let index = self.find_free()?;
         self.set_used(index);
         Some(index)
     }
 
     #[inline(always)]
-    pub fn release(&mut self, index: usize) -> Option<usize> {
+    fn release(&mut self, index: usize) -> Option<usize> {
         if self.is_used(index) {
             self.set_free(index);
             Some(index)
@@ -150,5 +182,12 @@ impl OccupancyBitmap {
             chunk: index >> 6,
             mask: 1u64 << (index & 63),
         }
+    }
+
+    #[inline(always)]
+    fn index(chunk_index: usize, bit_index: usize) -> usize {
+        let index = (chunk_index << 6) + bit_index;
+        debug_assert!(index < MAP_CAPACITY);
+        index
     }
 }

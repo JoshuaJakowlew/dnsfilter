@@ -1,17 +1,20 @@
-use std::{cell::RefCell};
+use std::cell::RefCell;
+use std::time::Duration;
 
 use tokio::net::UdpSocket;
+use tokio::time::Instant;
 use thiserror::Error;
 
 use trans_map::{Transaction, TransactionMap};
 use dns_packet::PacketId;
 
-use crate::{dns_packet::Packet, dns_parser::{ParseError, parse_questions}, packet_hash::hash_questions};
+use crate::{cleanup_timer::{CleanupTimer, elapsed_since}, dns_packet::Packet, dns_parser::{ParseError, parse_questions}, packet_hash::hash_questions};
 
 mod trans_map;
 mod dns_parser;
 mod dns_packet;
 mod packet_hash;
+mod cleanup_timer;
 
 #[derive(Error, Debug)]
 enum Error {
@@ -49,7 +52,7 @@ async fn make_sockets() -> Result<(UdpSocket, UdpSocket)> {
     Ok((listener, forwarder))
 }
 
-async fn send_forward(listener: &UdpSocket, forwarder: &UdpSocket, buf: &mut Packet, trans_map: &RefCell<TransactionMap>) -> Result<usize> {
+async fn send_forward(listener: &UdpSocket, forwarder: &UdpSocket, buf: &mut Packet, trans_map: &RefCell<TransactionMap>, epoch: Instant) -> Result<usize> {
     let (len, src) = listener.recv_from(buf)
         .await
         .map_err(Error::ReceiveError)?;
@@ -62,6 +65,7 @@ async fn send_forward(listener: &UdpSocket, forwarder: &UdpSocket, buf: &mut Pac
         addr: src,
         id: PacketId::from_packet(packet),
         hash: hash_questions(&questions),
+        created_at_ms: elapsed_since(epoch),
     };
 
     let fw_trans_id = trans_map
@@ -81,7 +85,7 @@ async fn send_back(listener: &UdpSocket, forwarder: &UdpSocket, buf: &mut Packet
     let len = forwarder.recv(buf)
             .await
             .map_err(Error::ReceiveError)?;
-    
+
     let packet = &mut buf[..len];
     let trans_id = PacketId::from_packet(packet);
     let questions = parse_questions(packet)
@@ -108,23 +112,28 @@ async fn main() -> Result<()> {
     let mut req_buf = [0; 65536];
     let mut resp_buf = [0; 65536];
     
-    let origins = RefCell::new(TransactionMap::new());
+    let trans_map = RefCell::new(TransactionMap::new());
+    let mut cleanup_timer = CleanupTimer::new(Duration::from_secs(1));
+    let epoch = cleanup_timer.epoch();
 
     loop {
         tokio::select! {
-            res = send_forward(&listener, &forwarder, &mut req_buf, &origins) => {
+            res = send_forward(&listener, &forwarder, &mut req_buf, &trans_map, epoch) => {
                 if let Err(e) = res {
                     println!("Error sending forward: {:?}", e);
                     continue;
                 }
-                // println!("Sent forward");
             }
-            res = send_back(&listener, &forwarder, &mut resp_buf, &origins) => {
+            res = send_back(&listener, &forwarder, &mut resp_buf, &trans_map) => {
                 if let Err(e) = res {
                     println!("Error sending back: {:?}", e);
                     continue;
                 }
-                // println!("Sent back");
+            }
+            _ = cleanup_timer.tick() => {
+                const MAX_AGE_MS: u32 = 5_000;
+                let removed = trans_map.borrow_mut().expire_older_than(elapsed_since(epoch), MAX_AGE_MS);
+                println!("Cleaned up: {} stale transactions", removed);
             }
         }
     }
