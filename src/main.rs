@@ -15,6 +15,7 @@ mod dns_parser;
 mod dns_packet;
 mod packet_hash;
 mod cleanup_timer;
+mod filter;
 
 #[derive(Error, Debug)]
 enum Error {

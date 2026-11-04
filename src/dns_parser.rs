@@ -1,5 +1,7 @@
 use thiserror::Error;
 
+use crate::dns_packet::QnameBuffer;
+
 #[derive(Error, Debug)]
 pub enum ParseError {
     #[error("Truncated packet")]
@@ -17,24 +19,18 @@ pub enum ParseError {
 pub type Result<T> = std::result::Result<T, ParseError>;
 
 pub struct Question {
+    pub qname: QnameBuffer,
     pub qtype: u16,
     pub qclass: u16,
-    qname: [u8; MAX_NAME],
-    name_len: usize,
 }
 
 impl Question {
     pub fn new() -> Self {
         Self {
-            qname: [0; MAX_NAME],
-            name_len: 0,
+            qname: QnameBuffer::new(),
             qtype: 0,
             qclass: 0,
         }
-    }
-    
-    pub fn qname(&self) -> &[u8] {
-        &self.qname[..self.name_len as usize]
     }
 }
 
@@ -77,12 +73,7 @@ fn extract_questions(packet: &[u8], qdcount: usize) -> Result<Vec<Question>> {
         let mut hops = 0usize;
         let mut written = 0usize;
 
-        let mut q = Question {
-            qname: [0; MAX_NAME],
-            name_len: 0,
-            qtype: 0,
-            qclass: 0,
-        };
+        let mut q = Question::new();
 
         loop {
             if pos >= end {
@@ -104,10 +95,10 @@ fn extract_questions(packet: &[u8], qdcount: usize) -> Result<Vec<Question>> {
                         break;
                     }
 
-                    q.qname[written..written + write_len].copy_from_slice(&packet[pos..pos + write_len]); // copy size tag and name segment to question
-                    q.qname[written + 1..written + write_len].make_ascii_lowercase(); // normalize name segment
-                    written += write_len;
+                    let segment = q.qname.append_segment(&packet[pos..pos + write_len]);
+                    segment[1..].make_ascii_lowercase(); // normalize name segment
 
+                    written += write_len;
                     pos += write_len;
 
                     if len == 0 { // end of name, parse qtype and qclass
@@ -119,8 +110,6 @@ fn extract_questions(packet: &[u8], qdcount: usize) -> Result<Vec<Question>> {
 
                         q.qtype = u16::from_be_bytes([packet[pos], packet[pos + 1]]);
                         q.qclass = u16::from_be_bytes([packet[pos + 2], packet[pos + 3]]);
-
-                        q.name_len = written;
 
                         // We are done with this question. Prepare pos for next question.
                         pos += 4;
