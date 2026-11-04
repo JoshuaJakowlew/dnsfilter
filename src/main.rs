@@ -105,7 +105,7 @@ async fn send_back(listener: &UdpSocket, forwarder: &UdpSocket, buf: &mut Packet
             .map_err(Error::SendError)
 }
 
-#[tokio::main]
+#[tokio::main(flavor = "current_thread")]
 async fn main() -> Result<()> {
     let (listener, forwarder) = make_sockets().await?;
     
