@@ -6,6 +6,8 @@ use thiserror::Error;
 use trans_map::{Transaction, TransactionMap};
 use dns_packet::PacketId;
 
+use crate::dns_packet::Packet;
+
 mod trans_map;
 mod dns_hasher;
 mod dns_packet;
@@ -44,7 +46,7 @@ async fn make_sockets() -> Result<(UdpSocket, UdpSocket)> {
     Ok((listener, forwarder))
 }
 
-async fn send_forward(listener: &UdpSocket, forwarder: &UdpSocket, buf: &mut [u8], trans_map: &RefCell<TransactionMap>) -> Result<usize> {
+async fn send_forward(listener: &UdpSocket, forwarder: &UdpSocket, buf: &mut Packet, trans_map: &RefCell<TransactionMap>) -> Result<usize> {
     let (len, src) = listener.recv_from(buf)
         .await
         .map_err(Error::ReceiveError)?;
@@ -69,7 +71,7 @@ async fn send_forward(listener: &UdpSocket, forwarder: &UdpSocket, buf: &mut [u8
         .map_err(Error::SendError)
 }
 
-async fn send_back(listener: &UdpSocket, forwarder: &UdpSocket, buf: &mut [u8], trans_map: &RefCell<TransactionMap>) -> Result<usize> {
+async fn send_back(listener: &UdpSocket, forwarder: &UdpSocket, buf: &mut Packet, trans_map: &RefCell<TransactionMap>) -> Result<usize> {
     let len = forwarder.recv(buf)
             .await
             .map_err(Error::ReceiveError)?;
@@ -94,8 +96,8 @@ async fn send_back(listener: &UdpSocket, forwarder: &UdpSocket, buf: &mut [u8], 
 async fn main() -> Result<()> {
     let (listener, forwarder) = make_sockets().await?;
     
-    let mut req_buf = [0; 4096];
-    let mut resp_buf = [0; 4096];
+    let mut req_buf = [0; 65536];
+    let mut resp_buf = [0; 65536];
     
     let origins = RefCell::new(TransactionMap::new());
 

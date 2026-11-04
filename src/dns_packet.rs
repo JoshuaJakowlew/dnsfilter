@@ -1,6 +1,6 @@
 const MAX_PACKET_SIZE: usize = 65536;
 
-type Packet = [u8; MAX_PACKET_SIZE];
+pub type Packet = [u8; MAX_PACKET_SIZE];
 
 #[derive(Clone, Copy, Debug)]
 pub struct PacketId(pub [u8; 2]);
