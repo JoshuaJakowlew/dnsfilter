@@ -3,9 +3,12 @@ use std::{cell::RefCell};
 use tokio::net::UdpSocket;
 use thiserror::Error;
 
-use trans_map::{DnsTransId, Transaction, TransactionMap};
+use trans_map::{Transaction, TransactionMap};
+use dns_packet::PacketId;
 
 mod trans_map;
+mod dns_hasher;
+mod dns_packet;
 
 #[derive(Error, Debug)]
 enum Error {
@@ -18,9 +21,9 @@ enum Error {
     #[error("Failed to receive data: {0}")]
     ReceiveError(std::io::Error),
     #[error("Origin map is full: {0:?}")]
-    TransactionMapFull(DnsTransId),
+    TransactionMapFull(PacketId),
     #[error("Origin not found: {0:?}")]
-    TransactionNotFound(DnsTransId),
+    TransactionNotFound(PacketId),
 }
 
 type Result<T> = std::result::Result<T, Error>;
@@ -50,7 +53,7 @@ async fn send_forward(listener: &UdpSocket, forwarder: &UdpSocket, buf: &mut [u8
 
     let trans = Transaction {
         addr: src,
-        id: DnsTransId::from_packet(packet),
+        id: PacketId::from_packet(packet),
     };
 
     let fw_trans_id = trans_map
@@ -73,7 +76,7 @@ async fn send_back(listener: &UdpSocket, forwarder: &UdpSocket, buf: &mut [u8], 
     
     let packet = &mut buf[..len];
 
-    let trans_id = DnsTransId::from_packet(packet);
+    let trans_id = PacketId::from_packet(packet);
     let trans = trans_map
         .borrow_mut()
         .extract(trans_id)

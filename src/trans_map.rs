@@ -1,30 +1,12 @@
 use std::mem::MaybeUninit;
 use std::net::SocketAddr;
 
-#[derive(Clone, Copy, Debug)]
-pub struct DnsTransId(pub [u8; 2]);
-
-impl DnsTransId {
-    pub fn from_index(index: usize) -> Self {
-        DnsTransId([(index >> 8) as u8, (index & 0xFF) as u8])
-    }
-
-    pub fn from_packet(packet: &[u8]) -> Self {
-        DnsTransId([packet[0], packet[1]])
-    }
-}
-
-impl From<DnsTransId> for usize {
-    fn from(id: DnsTransId) -> Self {
-        let DnsTransId(bytes) = id;
-        (bytes[0] as usize) << 8 | bytes[1] as usize
-    }
-}
+use crate::dns_packet::PacketId;
 
 #[derive(Clone, Copy)]
 pub struct Transaction {
     pub addr: SocketAddr,
-    pub id: DnsTransId,
+    pub id: PacketId,
 }
 
 pub struct TransactionMap {
@@ -40,13 +22,13 @@ impl TransactionMap {
         }
     }
 
-    pub fn insert(&mut self, origin: Transaction) -> Option<DnsTransId> {
+    pub fn insert(&mut self, origin: Transaction) -> Option<PacketId> {
         let i = self.occupancy.use_free()?;
         self.write(i, origin);
-        Some(DnsTransId::from_index(i))
+        Some(PacketId::from_map_index(i))
     }
 
-    pub fn extract(&mut self, id: DnsTransId) -> Option<Transaction> {
+    pub fn extract(&mut self, id: PacketId) -> Option<Transaction> {
         let i = self.occupancy.release(id.into())?;
         let origin = self.read(i);
         Some(origin)
