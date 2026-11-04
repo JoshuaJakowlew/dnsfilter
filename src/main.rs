@@ -3,7 +3,7 @@ use std::{cell::RefCell};
 use tokio::net::UdpSocket;
 use thiserror::Error;
 
-use trans_map::{DnsTransId, Origin, OriginMap};
+use trans_map::{DnsTransId, Transaction, TransactionMap};
 
 mod trans_map;
 
@@ -18,9 +18,9 @@ enum Error {
     #[error("Failed to receive data: {0}")]
     ReceiveError(std::io::Error),
     #[error("Origin map is full: {0:?}")]
-    OriginMapFull(DnsTransId),
+    TransactionMapFull(DnsTransId),
     #[error("Origin not found: {0:?}")]
-    OriginNotFound(DnsTransId),
+    TransactionNotFound(DnsTransId),
 }
 
 type Result<T> = std::result::Result<T, Error>;
@@ -41,22 +41,22 @@ async fn make_sockets() -> Result<(UdpSocket, UdpSocket)> {
     Ok((listener, forwarder))
 }
 
-async fn send_forward(listener: &UdpSocket, forwarder: &UdpSocket, buf: &mut [u8], origins: &RefCell<OriginMap>) -> Result<usize> {
+async fn send_forward(listener: &UdpSocket, forwarder: &UdpSocket, buf: &mut [u8], trans_map: &RefCell<TransactionMap>) -> Result<usize> {
     let (len, src) = listener.recv_from(buf)
         .await
         .map_err(Error::ReceiveError)?;
 
     let packet = &mut buf[..len];
 
-    let origin = Origin {
+    let trans = Transaction {
         addr: src,
-        trans_id: DnsTransId::from_packet(packet),
+        id: DnsTransId::from_packet(packet),
     };
 
-    let fw_trans_id = origins
+    let fw_trans_id = trans_map
         .borrow_mut()
-        .insert(origin)
-        .ok_or(Error::OriginMapFull(origin.trans_id))?;
+        .insert(trans)
+        .ok_or(Error::TransactionMapFull(trans.id))?;
 
     packet[0] = fw_trans_id.0[0];
     packet[1] = fw_trans_id.0[1];
@@ -66,7 +66,7 @@ async fn send_forward(listener: &UdpSocket, forwarder: &UdpSocket, buf: &mut [u8
         .map_err(Error::SendError)
 }
 
-async fn send_back(listener: &UdpSocket, forwarder: &UdpSocket, buf: &mut [u8], origins: &RefCell<OriginMap>) -> Result<usize> {
+async fn send_back(listener: &UdpSocket, forwarder: &UdpSocket, buf: &mut [u8], trans_map: &RefCell<TransactionMap>) -> Result<usize> {
     let len = forwarder.recv(buf)
             .await
             .map_err(Error::ReceiveError)?;
@@ -74,15 +74,15 @@ async fn send_back(listener: &UdpSocket, forwarder: &UdpSocket, buf: &mut [u8], 
     let packet = &mut buf[..len];
 
     let trans_id = DnsTransId::from_packet(packet);
-    let origin = origins
+    let trans = trans_map
         .borrow_mut()
         .extract(trans_id)
-        .ok_or(Error::OriginNotFound(trans_id))?;
+        .ok_or(Error::TransactionNotFound(trans_id))?;
 
-    packet[0] = origin.trans_id.0[0];
-    packet[1] = origin.trans_id.0[1];
+    packet[0] = trans.id.0[0];
+    packet[1] = trans.id.0[1];
 
-    listener.send_to(packet, origin.addr)
+    listener.send_to(packet, trans.addr)
             .await
             .map_err(Error::SendError)
 }
@@ -94,7 +94,7 @@ async fn main() -> Result<()> {
     let mut req_buf = [0; 4096];
     let mut resp_buf = [0; 4096];
     
-    let origins = RefCell::new(OriginMap::new());
+    let origins = RefCell::new(TransactionMap::new());
 
     loop {
         tokio::select! {

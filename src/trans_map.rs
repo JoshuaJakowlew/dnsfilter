@@ -22,17 +22,17 @@ impl From<DnsTransId> for usize {
 }
 
 #[derive(Clone, Copy)]
-pub struct Origin {
+pub struct Transaction {
     pub addr: SocketAddr,
-    pub trans_id: DnsTransId,
+    pub id: DnsTransId,
 }
 
-pub struct OriginMap {
-    origins: [MaybeUninit<Origin>; MAP_CAPACITY],
+pub struct TransactionMap {
+    origins: [MaybeUninit<Transaction>; MAP_CAPACITY],
     occupancy: OccupancyBitmap,
 }
 
-impl OriginMap {
+impl TransactionMap {
     pub fn new() -> Self {
         Self {
             origins: [MaybeUninit::uninit(); MAP_CAPACITY],
@@ -40,25 +40,25 @@ impl OriginMap {
         }
     }
 
-    pub fn insert(&mut self, origin: Origin) -> Option<DnsTransId> {
+    pub fn insert(&mut self, origin: Transaction) -> Option<DnsTransId> {
         let i = self.occupancy.use_free()?;
         self.write(i, origin);
         Some(DnsTransId::from_index(i))
     }
 
-    pub fn extract(&mut self, id: DnsTransId) -> Option<Origin> {
+    pub fn extract(&mut self, id: DnsTransId) -> Option<Transaction> {
         let i = self.occupancy.release(id.into())?;
         let origin = self.read(i);
         Some(origin)
     }
 
-    fn write(&mut self, index: usize, origin: Origin) {
+    fn write(&mut self, index: usize, origin: Transaction) {
         unsafe {
             self.origins.get_unchecked_mut(index).write(origin);
         }
     }
 
-    fn read(&self, index: usize) -> Origin {
+    fn read(&self, index: usize) -> Transaction {
         unsafe {
             self.origins.get_unchecked(index).assume_init_read()
         }
