@@ -1,4 +1,4 @@
-const MAX_PACKET_SIZE: usize = 65536;
+pub const MAX_PACKET_SIZE: usize = 65536;
 
 pub type Packet = [u8; MAX_PACKET_SIZE];
 

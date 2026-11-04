@@ -9,7 +9,7 @@ use dns_packet::PacketId;
 use crate::dns_packet::Packet;
 
 mod trans_map;
-mod dns_hasher;
+mod dns_parser;
 mod dns_packet;
 
 #[derive(Error, Debug)]
