@@ -25,6 +25,7 @@ impl From<PacketId> for usize {
 }
 
 pub const MAX_QNAME: usize = 255;
+pub const MAX_QNAME_SEGMENT: usize = 63;
 
 pub struct QnameBuffer {
     buffer: [MaybeUninit<u8>; MAX_QNAME],
@@ -39,6 +40,45 @@ impl QnameBuffer {
             buffer: [UNINIT_BYTE; MAX_QNAME],
             len: 0,
         }
+    }
+
+    pub fn from_domain(domain: &str) -> Option<Self> {
+        let mut qname = Self::new();
+        let mut domain = domain.as_bytes();
+
+        // Remove explicit root label.
+        if domain.last() == Some(&b'.') {
+            domain = &domain[..domain.len() - 1];
+        }
+
+        // Empty domain is a valid Qname.
+        if domain.is_empty() {
+            qname.buffer[0].write(0);
+            qname.len = 1;
+            return Some(qname);
+        }
+
+        for segment in domain.split(|&l| l == b'.') {
+            let slen = segment.len();
+            
+            if segment.is_empty() ||
+               slen > MAX_QNAME_SEGMENT ||
+               slen + qname.len + 2 > MAX_QNAME { // +2 for current size and null terminator
+                return None;
+            }
+
+            let start = qname.len;
+            let end = start + slen + 1;
+            qname.buffer[start].write(slen as u8);
+            qname.buffer[start + 1..end]
+                .write_copy_of_slice(segment)
+                .make_ascii_lowercase();
+            qname.len = end;
+        }
+
+        qname.buffer[qname.len].write(0);
+        qname.len += 1;
+        Some(qname)
     }
 
     pub fn len(&self) -> usize {
@@ -59,3 +99,4 @@ impl QnameBuffer {
         self.buffer[start..end].write_copy_of_slice(segment)
     }
 }
+
