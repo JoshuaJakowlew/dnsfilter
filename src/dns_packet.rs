@@ -52,7 +52,7 @@ impl QnameBuffer {
     }
 
     // Returns a slice of the appended segment.
-    pub fn append_segment(&mut self, segment: &[u8]) -> &mut [u8] {
+    pub fn push_segment(&mut self, segment: &[u8]) -> &mut [u8] {
         let start = self.len;
         let end = self.len + segment.len();
         self.len = end;

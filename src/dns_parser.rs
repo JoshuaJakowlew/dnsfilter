@@ -95,7 +95,7 @@ fn extract_questions(packet: &[u8], qdcount: usize) -> Result<Vec<Question>> {
                         break;
                     }
 
-                    let segment = q.qname.append_segment(&packet[pos..pos + write_len]);
+                    let segment = q.qname.push_segment(&packet[pos..pos + write_len]);
                     segment[1..].make_ascii_lowercase(); // normalize name segment
 
                     written += write_len;
