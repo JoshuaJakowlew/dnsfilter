@@ -7,17 +7,18 @@ use crate::dns_packet::PacketId;
 pub struct Transaction {
     pub addr: SocketAddr,
     pub id: PacketId,
+    pub hash: u64,
 }
 
 pub struct TransactionMap {
-    origins: [MaybeUninit<Transaction>; MAP_CAPACITY],
+    origins: Box<[MaybeUninit<Transaction>; MAP_CAPACITY]>,
     occupancy: OccupancyBitmap,
 }
 
 impl TransactionMap {
     pub fn new() -> Self {
         Self {
-            origins: [MaybeUninit::uninit(); MAP_CAPACITY],
+            origins: Box::new_uninit_slice(MAP_CAPACITY).try_into().unwrap(),
             occupancy: OccupancyBitmap::new(),
         }
     }
@@ -28,9 +29,13 @@ impl TransactionMap {
         Some(PacketId::from_map_index(i))
     }
 
-    pub fn extract(&mut self, id: PacketId) -> Option<Transaction> {
+    pub fn extract(&mut self, id: PacketId, hash: u64) -> Option<Transaction> {
         let i = self.occupancy.release(id.into())?;
         let origin = self.read(i);
+        if origin.hash != hash {
+            self.occupancy.set_used(i);
+            return None;
+        }
         Some(origin)
     }
 

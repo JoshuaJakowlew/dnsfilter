@@ -6,11 +6,12 @@ use thiserror::Error;
 use trans_map::{Transaction, TransactionMap};
 use dns_packet::PacketId;
 
-use crate::dns_packet::Packet;
+use crate::{dns_packet::Packet, dns_parser::{ParseError, parse_questions}, packet_hash::hash_questions};
 
 mod trans_map;
 mod dns_parser;
 mod dns_packet;
+mod packet_hash;
 
 #[derive(Error, Debug)]
 enum Error {
@@ -26,6 +27,8 @@ enum Error {
     TransactionMapFull(PacketId),
     #[error("Origin not found: {0:?}")]
     TransactionNotFound(PacketId),
+    #[error("Failed to parse packet: {0}")]
+    ParseError(ParseError),
 }
 
 type Result<T> = std::result::Result<T, Error>;
@@ -52,10 +55,13 @@ async fn send_forward(listener: &UdpSocket, forwarder: &UdpSocket, buf: &mut Pac
         .map_err(Error::ReceiveError)?;
 
     let packet = &mut buf[..len];
+    let questions = parse_questions(packet)
+        .map_err(Error::ParseError)?;
 
     let trans = Transaction {
         addr: src,
         id: PacketId::from_packet(packet),
+        hash: hash_questions(&questions),
     };
 
     let fw_trans_id = trans_map
@@ -77,11 +83,14 @@ async fn send_back(listener: &UdpSocket, forwarder: &UdpSocket, buf: &mut Packet
             .map_err(Error::ReceiveError)?;
     
     let packet = &mut buf[..len];
-
     let trans_id = PacketId::from_packet(packet);
+    let questions = parse_questions(packet)
+        .map_err(Error::ParseError)?;
+    let hash = hash_questions(&questions);
+
     let trans = trans_map
         .borrow_mut()
-        .extract(trans_id)
+        .extract(trans_id, hash)
         .ok_or(Error::TransactionNotFound(trans_id))?;
 
     packet[0] = trans.id.0[0];

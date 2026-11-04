@@ -1,6 +1,42 @@
-use std::cmp::min;
+use thiserror::Error;
 
-use crate::dns_packet::{MAX_PACKET_SIZE, Packet};
+#[derive(Error, Debug)]
+pub enum ParseError {
+    #[error("Truncated packet")]
+    Truncated,
+    #[error("Bad label")]
+    BadLabel,
+    #[error("Name too long")]
+    NameTooLong,
+    #[error("Too many hops")]
+    TooManyHops,
+    #[error("Invalid offset")]
+    InvalidOffset,
+}
+
+pub type Result<T> = std::result::Result<T, ParseError>;
+
+pub struct Question {
+    pub qtype: u16,
+    pub qclass: u16,
+    qname: [u8; MAX_NAME],
+    name_len: usize,
+}
+
+impl Question {
+    pub fn new() -> Self {
+        Self {
+            qname: [0; MAX_NAME],
+            name_len: 0,
+            qtype: 0,
+            qclass: 0,
+        }
+    }
+    
+    pub fn qname(&self) -> &[u8] {
+        &self.qname[..self.name_len as usize]
+    }
+}
 
 const HEADER_SIZE: usize = 12;
 const MAX_NAME: usize = 255;
@@ -11,23 +47,6 @@ mod tag_mask {
     pub const LEN: u8 = 0x00;
     pub const PTR: u8 = 0xC0;
     pub const PTR_OFFSET_MASK: u16 = 0x3FFF;
-}
-
-enum ParseError {
-    Truncated,
-    BadLabel,
-    NameTooLong,
-    TooManyHops,
-    InvalidOffset,
-}
-
-type Result<T> = std::result::Result<T, ParseError>;
-
-struct Question {
-    qname: [u8; MAX_NAME],
-    name_len: u8,
-    qtype: u16,
-    qclass: u16,
 }
 
 pub fn parse_questions(packet: &[u8]) -> Result<Vec<Question>> {
@@ -101,7 +120,7 @@ fn extract_questions(packet: &[u8], qdcount: usize) -> Result<Vec<Question>> {
                         q.qtype = u16::from_be_bytes([packet[pos], packet[pos + 1]]);
                         q.qclass = u16::from_be_bytes([packet[pos + 2], packet[pos + 3]]);
 
-                        q.name_len = written as u8;
+                        q.name_len = written;
 
                         // We are done with this question. Prepare pos for next question.
                         pos += 4;
