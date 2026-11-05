@@ -46,8 +46,13 @@ mod tag_mask {
 }
 
 pub fn parse_questions(packet: &[u8]) -> Result<Vec<Question>> {
+    let (_, questions) = parse_questions_with_pos(packet)?;
+    Ok(questions)
+}
+
+pub fn parse_questions_with_pos(packet: &[u8]) -> Result<(usize, Vec<Question>)> {
     let qdcount = extract_qdcount(packet)?;
-    extract_questions(packet, qdcount)
+    extract_questions_with_pos(packet, qdcount)
 }
 
 fn extract_qdcount(packet: &[u8]) -> Result<usize> {
@@ -59,7 +64,7 @@ fn extract_qdcount(packet: &[u8]) -> Result<usize> {
     }
 }
 
-fn extract_questions(packet: &[u8], qdcount: usize) -> Result<Vec<Question>> {
+fn extract_questions_with_pos(packet: &[u8], qdcount: usize) -> Result<(usize, Vec<Question>)> {
     let mut pos = HEADER_SIZE;
     let end = packet.len();
 
@@ -155,5 +160,5 @@ fn extract_questions(packet: &[u8], qdcount: usize) -> Result<Vec<Question>> {
         questions.push(q);
     }
 
-    Ok(questions)
+    Ok((pos, questions))
 }

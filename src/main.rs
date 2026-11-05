@@ -8,11 +8,12 @@ use thiserror::Error;
 use trans_map::{Transaction, TransactionMap};
 use dns_packet::PacketId;
 
-use crate::{cleanup_timer::{CleanupTimer, elapsed_since}, dns_packet::Packet, dns_parser::{ParseError, parse_questions}, packet_hash::hash_questions};
+use crate::{cleanup_timer::{CleanupTimer, elapsed_since}, dns_packet::{Packet, QnameBuffer}, dns_parser::{ParseError, parse_questions, parse_questions_with_pos}, dns_response::write_blocked_response, filter::{QnameFilter, QnamePool}, packet_hash::hash_questions};
 
 mod trans_map;
 mod dns_parser;
 mod dns_packet;
+mod dns_response;
 mod packet_hash;
 mod cleanup_timer;
 mod filter;
@@ -33,9 +34,40 @@ enum Error {
     TransactionNotFound(PacketId),
     #[error("Failed to parse packet: {0}")]
     ParseError(ParseError),
+    #[error("Failed to make filter")]
+    FilterError,
 }
 
 type Result<T> = std::result::Result<T, Error>;
+
+fn make_filter() -> Result<QnameFilter> {
+    let domains = vec![
+        "ya.ru",
+        "vk.com",
+    ];
+
+    let mut pool = QnamePool::new();
+    for domain in domains {
+        let qname = QnameBuffer::from_domain(domain)
+            .ok_or(Error::FilterError)?;
+        pool.push(&qname);
+    }
+
+    let filter = QnameFilter::from_unique_pool(pool);
+    Ok(filter)
+}
+
+fn apply_filter(filter: &QnameFilter, packet: &mut Packet, len: usize) -> Result<(usize, bool)> {
+    let (pos, questions) = parse_questions_with_pos(packet)
+        .map_err(Error::ParseError)?;
+    for question in questions {
+        if filter.contains(question.qname.as_slice()) {
+            let resp_size = write_blocked_response(packet, len, pos);
+            return Ok((resp_size, false));
+        }
+    }
+    Ok((0, true))
+}
 
 async fn make_sockets() -> Result<(UdpSocket, UdpSocket)> {
     let listener = UdpSocket::bind("0.0.0.0:5354")
@@ -46,25 +78,38 @@ async fn make_sockets() -> Result<(UdpSocket, UdpSocket)> {
         .await
         .map_err(Error::BindError)?;
 
-    forwarder.connect("172.29.172.254:53")
+    forwarder.connect("1.1.1.1:53")
         .await
         .map_err(Error::ConnectError)?;
 
     Ok((listener, forwarder))
 }
 
-async fn send_forward(listener: &UdpSocket, forwarder: &UdpSocket, buf: &mut Packet, trans_map: &RefCell<TransactionMap>, epoch: Instant) -> Result<usize> {
+async fn send_forward(
+    listener: &UdpSocket,
+    forwarder: &UdpSocket,
+    buf: &mut Packet,
+    trans_map: &RefCell<TransactionMap>,
+    epoch: Instant,
+    filter: &QnameFilter,
+) -> Result<usize> {
     let (len, src) = listener.recv_from(buf)
         .await
         .map_err(Error::ReceiveError)?;
 
-    let packet = &mut buf[..len];
-    let questions = parse_questions(packet)
+    let questions = parse_questions(&buf[..len])
         .map_err(Error::ParseError)?;
+
+    if let (resp_len, false) = apply_filter(&filter, buf, len)? {
+        listener.send_to(&buf[..resp_len], src)
+            .await
+            .map_err(Error::SendError)?;
+        return Ok(resp_len);
+    }
 
     let trans = Transaction {
         addr: src,
-        id: PacketId::from_packet(packet),
+        id: PacketId::from_packet(&buf[..len]),
         hash: hash_questions(&questions),
         created_at_ms: elapsed_since(epoch),
     };
@@ -74,10 +119,10 @@ async fn send_forward(listener: &UdpSocket, forwarder: &UdpSocket, buf: &mut Pac
         .insert(trans)
         .ok_or(Error::TransactionMapFull(trans.id))?;
 
-    packet[0] = fw_trans_id.0[0];
-    packet[1] = fw_trans_id.0[1];
+    buf[0] = fw_trans_id.0[0];
+    buf[1] = fw_trans_id.0[1];
 
-    forwarder.send(packet)
+    forwarder.send(&buf[..len])
         .await
         .map_err(Error::SendError)
 }
@@ -110,6 +155,8 @@ async fn send_back(listener: &UdpSocket, forwarder: &UdpSocket, buf: &mut Packet
 async fn main() -> Result<()> {
     let (listener, forwarder) = make_sockets().await?;
     
+    let filter = make_filter()?;
+
     let mut req_buf = [0; 65536];
     let mut resp_buf = [0; 65536];
     
@@ -119,7 +166,7 @@ async fn main() -> Result<()> {
 
     loop {
         tokio::select! {
-            res = send_forward(&listener, &forwarder, &mut req_buf, &trans_map, epoch) => {
+            res = send_forward(&listener, &forwarder, &mut req_buf, &trans_map, epoch, &filter) => {
                 if let Err(e) = res {
                     println!("Error sending forward: {:?}", e);
                     continue;
