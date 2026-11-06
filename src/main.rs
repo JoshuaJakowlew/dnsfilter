@@ -6,9 +6,11 @@ use tokio::net::UdpSocket;
 use tokio::time::Instant;
 use thiserror::Error;
 
-use trans_map::{Transaction, TransactionMap};
+use trans_map::{Transaction, TransMap};
 use dns_packet::PacketId;
 
+use crate::dns_parser::Query;
+use crate::trans_manager::TransStorage;
 use crate::{cleanup_timer::{CleanupTimer, elapsed_since}, dns_packet::{Packet, QnameBuffer}, dns_parser::{ParseError, parse_query}, dns_response::write_blocked_response, filter::{QnameFilter, QnamePool}, forwarder::Forwarder, packet_hash::hash_query};
 
 mod trans_map;
@@ -19,15 +21,14 @@ mod packet_hash;
 mod cleanup_timer;
 mod filter;
 mod forwarder;
+mod trans_manager;
 
 #[derive(Error, Debug)]
 enum Error {
     #[error("I/O error: {0}")]
     Io(std::io::Error),
-    #[error("Transaction map is full: {0:?}")]
-    TransactionMapFull(PacketId),
-    #[error("Origin not found: {0:?}")]
-    TransactionNotFound(PacketId),
+    #[error("Transaction: {0}")]
+    Transaction(trans_manager::Error),
     #[error("Failed to parse packet: {0}")]
     ParseError(ParseError),
     #[error("Failed to make filter")]
@@ -68,8 +69,7 @@ fn apply_filter(filter: &QnameFilter, packet: &mut Packet, len: usize) -> Result
 async fn send_forward(
     forwarder: &Forwarder,
     buf: &mut Packet,
-    trans_map: &RefCell<TransactionMap>,
-    epoch: Instant,
+    trans_storage: &TransStorage,
     filter: &QnameFilter,
 ) -> Result<usize> {
     let (len, src) = forwarder.recv_local(buf)
@@ -86,17 +86,9 @@ async fn send_forward(
         return Ok(resp_len);
     }
 
-    let trans = Transaction {
-        addr: src,
-        id: PacketId::from_packet(&buf[..len]),
-        hash: hash_query(&query),
-        created_at_ms: elapsed_since(epoch),
-    };
-
-    let fw_trans_id = trans_map
-        .borrow_mut()
-        .insert(trans)
-        .ok_or(Error::TransactionMapFull(trans.id))?;
+    let fw_trans_id = trans_storage
+        .insert(src, &buf[..len], &query)
+        .map_err(Error::Transaction)?;
 
     buf[0] = fw_trans_id.0[0];
     buf[1] = fw_trans_id.0[1];
@@ -106,21 +98,22 @@ async fn send_forward(
         .map_err(Error::Io)
 }
 
-async fn send_back(forwarder: &Forwarder, buf: &mut Packet, trans_map: &RefCell<TransactionMap>) -> Result<usize> {
+async fn send_back(
+    forwarder: &Forwarder,
+    buf: &mut Packet,
+    trans_storage: &TransStorage
+) -> Result<usize> {
     let len = forwarder.recv_remote(buf)
             .await
             .map_err(Error::Io)?;
 
     let packet = &mut buf[..len];
-    let trans_id = PacketId::from_packet(packet);
     let (_, query) = parse_query(packet)
         .map_err(Error::ParseError)?;
-    let hash = hash_query(&query);
 
-    let trans = trans_map
-        .borrow_mut()
-        .extract(trans_id, hash)
-        .ok_or(Error::TransactionNotFound(trans_id))?;
+    let trans = trans_storage
+        .extract(packet, &query)
+        .map_err(Error::Transaction)?;
 
     packet[0] = trans.id.0[0];
     packet[1] = trans.id.0[1];
@@ -146,28 +139,24 @@ async fn main() -> Result<()> {
     let mut req_buf = [0; 65536];
     let mut resp_buf = [0; 65536];
     
-    let trans_map = RefCell::new(TransactionMap::new());
-    let mut cleanup_timer = CleanupTimer::new(Duration::from_secs(1));
-    let epoch = cleanup_timer.epoch();
+    let trans_storage = TransStorage::new();
 
     loop {
         tokio::select! {
-            res = send_forward(&forwarder, &mut req_buf, &trans_map, epoch, &filter) => {
+            res = send_forward(&forwarder, &mut req_buf, &trans_storage, &filter) => {
                 if let Err(e) = res {
-                    println!("Error sending forward: {:?}", e);
+                    println!("Error sending forward: {}", e);
                     continue;
                 }
             }
-            res = send_back(&forwarder, &mut resp_buf, &trans_map) => {
+            res = send_back(&forwarder, &mut resp_buf, &trans_storage) => {
                 if let Err(e) = res {
-                    println!("Error sending back: {:?}", e);
+                    println!("Error sending back: {}", e);
                     continue;
                 }
             }
-            _ = cleanup_timer.tick() => {
-                const MAX_AGE_MS: u32 = 5_000;
-                let removed = trans_map.borrow_mut().expire_older_than(elapsed_since(epoch), MAX_AGE_MS);
-                println!("Cleaned up: {} stale transactions", removed);
+            removed = trans_storage.cleanup_expired() => {
+                println!("Cleaned up: {} expired transactions", removed);
             }
         }
     }

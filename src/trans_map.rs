@@ -11,12 +11,12 @@ pub struct Transaction {
     pub id: PacketId,
 }
 
-pub struct TransactionMap {
+pub struct TransMap {
     origins: Box<[MaybeUninit<Transaction>; MAP_CAPACITY]>,
     occupancy: OccupancyBitmap,
 }
 
-impl TransactionMap {
+impl TransMap {
     pub fn new() -> Self {
         Self {
             origins: Box::new_uninit_slice(MAP_CAPACITY).try_into().unwrap(),
