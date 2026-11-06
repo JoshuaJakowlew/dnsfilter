@@ -23,8 +23,8 @@ impl Forwarder {
         self.local.recv_from(buf).await
     }
 
-    pub async fn send_local(&self, buf: &[u8]) -> Result<usize> {
-        self.local.send(buf).await
+    pub async fn send_local(&self, buf: &[u8], addr: SocketAddr) -> Result<usize> {
+        self.local.send_to(buf, addr).await
     }
 
     pub async fn recv_remote(&self, buf: &mut [u8]) -> Result<usize> {

@@ -80,7 +80,7 @@ async fn send_forward(
         .map_err(Error::ParseError)?;
 
     if let (resp_len, false) = apply_filter(&filter, buf, len)? {
-        forwarder.send_local(&buf[..resp_len])
+        forwarder.send_local(&buf[..resp_len], src)
             .await
             .map_err(Error::Io)?;
         return Ok(resp_len);
@@ -125,7 +125,7 @@ async fn send_back(forwarder: &Forwarder, buf: &mut Packet, trans_map: &RefCell<
     packet[0] = trans.id.0[0];
     packet[1] = trans.id.0[1];
 
-    forwarder.send_local(packet)
+    forwarder.send_local(packet, trans.addr)
             .await
             .map_err(Error::Io)
 }
