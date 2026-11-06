@@ -8,7 +8,7 @@ use thiserror::Error;
 use trans_map::{Transaction, TransactionMap};
 use dns_packet::PacketId;
 
-use crate::{cleanup_timer::{CleanupTimer, elapsed_since}, dns_packet::{Packet, QnameBuffer}, dns_parser::{ParseError, parse_questions, parse_questions_with_pos}, dns_response::write_blocked_response, filter::{QnameFilter, QnamePool}, packet_hash::hash_questions};
+use crate::{cleanup_timer::{CleanupTimer, elapsed_since}, dns_packet::{Packet, QnameBuffer}, dns_parser::{ParseError, parse_questions, parse_questions_with_pos}, dns_response::write_blocked_response, filter::{QnameFilter, QnamePool}, forwarder::Forwarder, packet_hash::hash_questions};
 
 mod trans_map;
 mod dns_parser;
@@ -17,18 +17,13 @@ mod dns_response;
 mod packet_hash;
 mod cleanup_timer;
 mod filter;
+mod forwarder;
 
 #[derive(Error, Debug)]
 enum Error {
-    #[error("Failed to bind to address: {0}")]
-    BindError(std::io::Error),
-    #[error("Failed to connect to address: {0}")]
-    ConnectError(std::io::Error),
-    #[error("Failed to send data: {0}")]
-    SendError(std::io::Error),
-    #[error("Failed to receive data: {0}")]
-    ReceiveError(std::io::Error),
-    #[error("Origin map is full: {0:?}")]
+    #[error("I/O error: {0}")]
+    Io(std::io::Error),
+    #[error("Transaction map is full: {0:?}")]
     TransactionMapFull(PacketId),
     #[error("Origin not found: {0:?}")]
     TransactionNotFound(PacketId),
@@ -86,24 +81,23 @@ async fn make_sockets() -> Result<(UdpSocket, UdpSocket)> {
 }
 
 async fn send_forward(
-    listener: &UdpSocket,
-    forwarder: &UdpSocket,
+    forwarder: &Forwarder,
     buf: &mut Packet,
     trans_map: &RefCell<TransactionMap>,
     epoch: Instant,
     filter: &QnameFilter,
 ) -> Result<usize> {
-    let (len, src) = listener.recv_from(buf)
+    let (len, src) = forwarder.recv_local(buf)
         .await
-        .map_err(Error::ReceiveError)?;
+        .map_err(Error::Io)?;
 
     let questions = parse_questions(&buf[..len])
         .map_err(Error::ParseError)?;
 
     if let (resp_len, false) = apply_filter(&filter, buf, len)? {
-        listener.send_to(&buf[..resp_len], src)
+        forwarder.send_local(&buf[..resp_len])
             .await
-            .map_err(Error::SendError)?;
+            .map_err(Error::Io)?;
         return Ok(resp_len);
     }
 
@@ -122,15 +116,15 @@ async fn send_forward(
     buf[0] = fw_trans_id.0[0];
     buf[1] = fw_trans_id.0[1];
 
-    forwarder.send(&buf[..len])
+    forwarder.send_remote(&buf[..len])
         .await
-        .map_err(Error::SendError)
+        .map_err(Error::Io)
 }
 
-async fn send_back(listener: &UdpSocket, forwarder: &UdpSocket, buf: &mut Packet, trans_map: &RefCell<TransactionMap>) -> Result<usize> {
-    let len = forwarder.recv(buf)
+async fn send_back(forwarder: &Forwarder, buf: &mut Packet, trans_map: &RefCell<TransactionMap>) -> Result<usize> {
+    let len = forwarder.recv_remote(buf)
             .await
-            .map_err(Error::ReceiveError)?;
+            .map_err(Error::Io)?;
 
     let packet = &mut buf[..len];
     let trans_id = PacketId::from_packet(packet);
@@ -146,14 +140,16 @@ async fn send_back(listener: &UdpSocket, forwarder: &UdpSocket, buf: &mut Packet
     packet[0] = trans.id.0[0];
     packet[1] = trans.id.0[1];
 
-    listener.send_to(packet, trans.addr)
+    forwarder.send_local(packet)
             .await
-            .map_err(Error::SendError)
+            .map_err(Error::Io)
 }
 
 #[tokio::main(flavor = "current_thread")]
 async fn main() -> Result<()> {
-    let (listener, forwarder) = make_sockets().await?;
+    let forwarder = Forwarder::bind(5354)
+        .await
+        .map_err(Error::Io)?;
     
     let filter = make_filter()?;
 
@@ -166,13 +162,13 @@ async fn main() -> Result<()> {
 
     loop {
         tokio::select! {
-            res = send_forward(&listener, &forwarder, &mut req_buf, &trans_map, epoch, &filter) => {
+            res = send_forward(&forwarder, &mut req_buf, &trans_map, epoch, &filter) => {
                 if let Err(e) = res {
                     println!("Error sending forward: {:?}", e);
                     continue;
                 }
             }
-            res = send_back(&listener, &forwarder, &mut resp_buf, &trans_map) => {
+            res = send_back(&forwarder, &mut resp_buf, &trans_map) => {
                 if let Err(e) = res {
                     println!("Error sending back: {:?}", e);
                     continue;
