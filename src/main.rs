@@ -64,22 +64,6 @@ fn apply_filter(filter: &QnameFilter, packet: &mut Packet, len: usize) -> Result
     Ok((0, true))
 }
 
-async fn make_sockets() -> Result<(UdpSocket, UdpSocket)> {
-    let listener = UdpSocket::bind("0.0.0.0:5354")
-        .await
-        .map_err(Error::BindError)?;
-
-    let forwarder = UdpSocket::bind("0.0.0.0:0")
-        .await
-        .map_err(Error::BindError)?;
-
-    forwarder.connect("1.1.1.1:53")
-        .await
-        .map_err(Error::ConnectError)?;
-
-    Ok((listener, forwarder))
-}
-
 async fn send_forward(
     forwarder: &Forwarder,
     buf: &mut Packet,
