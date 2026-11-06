@@ -9,7 +9,7 @@ use thiserror::Error;
 use trans_map::{Transaction, TransactionMap};
 use dns_packet::PacketId;
 
-use crate::{cleanup_timer::{CleanupTimer, elapsed_since}, dns_packet::{Packet, QnameBuffer}, dns_parser::{ParseError, parse_questions, parse_questions_with_pos}, dns_response::write_blocked_response, filter::{QnameFilter, QnamePool}, forwarder::Forwarder, packet_hash::hash_questions};
+use crate::{cleanup_timer::{CleanupTimer, elapsed_since}, dns_packet::{Packet, QnameBuffer}, dns_parser::{ParseError, parse_query}, dns_response::write_blocked_response, filter::{QnameFilter, QnamePool}, forwarder::Forwarder, packet_hash::hash_query};
 
 mod trans_map;
 mod dns_parser;
@@ -54,14 +54,14 @@ fn make_filter() -> Result<QnameFilter> {
 }
 
 fn apply_filter(filter: &QnameFilter, packet: &mut Packet, len: usize) -> Result<(usize, bool)> {
-    let (pos, questions) = parse_questions_with_pos(packet)
+    let (pos, query) = parse_query(packet)
         .map_err(Error::ParseError)?;
-    for question in questions {
-        if filter.contains(question.qname.as_slice()) {
-            let resp_size = write_blocked_response(packet, len, pos);
-            return Ok((resp_size, false));
-        }
+
+    if filter.contains(query.qname.as_slice()) {
+        let resp_size = write_blocked_response(packet, len, pos);
+        return Ok((resp_size, false));
     }
+
     Ok((0, true))
 }
 
@@ -76,7 +76,7 @@ async fn send_forward(
         .await
         .map_err(Error::Io)?;
 
-    let questions = parse_questions(&buf[..len])
+    let (_, query) = parse_query(&buf[..len])
         .map_err(Error::ParseError)?;
 
     if let (resp_len, false) = apply_filter(&filter, buf, len)? {
@@ -89,7 +89,7 @@ async fn send_forward(
     let trans = Transaction {
         addr: src,
         id: PacketId::from_packet(&buf[..len]),
-        hash: hash_questions(&questions),
+        hash: hash_query(&query),
         created_at_ms: elapsed_since(epoch),
     };
 
@@ -113,9 +113,9 @@ async fn send_back(forwarder: &Forwarder, buf: &mut Packet, trans_map: &RefCell<
 
     let packet = &mut buf[..len];
     let trans_id = PacketId::from_packet(packet);
-    let questions = parse_questions(packet)
+    let (_, query) = parse_query(packet)
         .map_err(Error::ParseError)?;
-    let hash = hash_questions(&questions);
+    let hash = hash_query(&query);
 
     let trans = trans_map
         .borrow_mut()

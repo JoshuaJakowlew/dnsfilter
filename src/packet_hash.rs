@@ -2,14 +2,12 @@ use std::hash::Hasher;
 
 use rapidhash::fast::RapidHasher;
 
-use crate::dns_parser::Question;
+use crate::dns_parser::Query;
 
-pub fn hash_questions(questions: &[Question]) -> u64 {
+pub fn hash_query(query: &Query) -> u64 {
     let mut hasher = RapidHasher::default();
-    for q in questions {
-        hasher.write(q.qname.as_slice());
-        hasher.write_u16(q.qtype);
-        hasher.write_u16(q.qclass);
-    }
+    hasher.write(query.qname.as_slice());
+    hasher.write_u16(query.qtype);
+    hasher.write_u16(query.qclass);
     hasher.finish()
 }
