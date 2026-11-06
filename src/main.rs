@@ -1,4 +1,5 @@
-use std::cell::RefCell;
+use std::net::{IpAddr, SocketAddr};
+use std::{cell::RefCell, net::SocketAddrV4, net::Ipv4Addr};
 use std::time::Duration;
 
 use tokio::net::UdpSocket;
@@ -135,6 +136,11 @@ async fn main() -> Result<()> {
         .await
         .map_err(Error::Io)?;
     
+    let remote_addr = SocketAddr::new(IpAddr::V4(Ipv4Addr::new(1, 1, 1, 1)), 53);
+    forwarder.connect(remote_addr)
+        .await
+        .map_err(Error::Io)?;
+
     let filter = make_filter()?;
 
     let mut req_buf = [0; 65536];
