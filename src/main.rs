@@ -1,17 +1,11 @@
 use std::net::{IpAddr, SocketAddr};
-use std::{cell::RefCell, net::SocketAddrV4, net::Ipv4Addr};
-use std::time::Duration;
+use std::net::Ipv4Addr;
 
-use tokio::net::UdpSocket;
-use tokio::time::Instant;
 use thiserror::Error;
-
-use trans_map::{Transaction, TransMap};
-use dns_packet::PacketId;
 
 use crate::dns_parser::Query;
 use crate::trans_manager::TransStorage;
-use crate::{cleanup_timer::{CleanupTimer, elapsed_since}, dns_packet::{Packet, QnameBuffer}, dns_parser::{ParseError, parse_query}, dns_response::write_blocked_response, filter::{QnameFilter, QnamePool}, forwarder::Forwarder, packet_hash::hash_query};
+use crate::{dns_packet::{Packet, QnameBuffer}, dns_parser::{ParseError, parse_query}, dns_response::write_blocked_response, filter::{QnameFilter, QnamePool}, forwarder::Forwarder};
 
 mod trans_map;
 mod dns_parser;
@@ -54,60 +48,90 @@ fn make_filter() -> Result<QnameFilter> {
     Ok(filter)
 }
 
-fn apply_filter(filter: &QnameFilter, packet: &mut Packet, len: usize) -> Result<(usize, bool)> {
-    let (pos, query) = parse_query(packet)
-        .map_err(Error::ParseError)?;
-
+fn apply_filter(filter: &QnameFilter, packet: &mut Packet, len: usize, query: &Query, q_end: usize) -> Result<(usize, bool)> {
     if filter.contains(query.qname.as_slice()) {
-        let resp_size = write_blocked_response(packet, len, pos);
+        let resp_size = write_blocked_response(packet, len, q_end);
         return Ok((resp_size, false));
     }
-
     Ok((0, true))
 }
 
+struct ForwardLink<'a> {
+    forwarder: &'a Forwarder,
+    buf: [u8; 65536],
+}
+
+impl<'a> ForwardLink<'a> {
+    async fn recv_query(&mut self) -> Result<(usize, SocketAddr)> {
+        self.forwarder.recv_local(&mut self.buf)
+            .await
+            .map_err(Error::Io)
+    }
+
+    async fn send_blocked_response(&mut self, len: usize, addr: SocketAddr) -> Result<usize> {
+        self.forwarder.send_local(&self.buf[..len], addr)
+            .await
+            .map_err(Error::Io)
+    }
+
+    async fn forward_query(&mut self, len: usize) -> Result<usize> {
+        self.forwarder.send_remote(&self.buf[..len])
+            .await
+            .map_err(Error::Io)
+    }
+}
+
 async fn send_forward(
-    forwarder: &Forwarder,
-    buf: &mut Packet,
+    link: &mut ForwardLink<'_>,
     trans_storage: &TransStorage,
     filter: &QnameFilter,
 ) -> Result<usize> {
-    let (len, src) = forwarder.recv_local(buf)
-        .await
-        .map_err(Error::Io)?;
+    let (len, addr) = link.recv_query().await?;
 
-    let (_, query) = parse_query(&buf[..len])
+    let (q_end, query) = parse_query(&link.buf[..len])
         .map_err(Error::ParseError)?;
 
-    if let (resp_len, false) = apply_filter(&filter, buf, len)? {
-        forwarder.send_local(&buf[..resp_len], src)
-            .await
-            .map_err(Error::Io)?;
+    if let (resp_len, false) = apply_filter(&filter, &mut link.buf, len, &query, q_end)? {      
+        link.send_blocked_response(resp_len, addr).await?;
         return Ok(resp_len);
     }
 
-    let fw_trans_id = trans_storage
-        .insert(src, &buf[..len], &query)
+    let trans_id = trans_storage
+        .insert(addr, &link.buf[..len], &query)
         .map_err(Error::Transaction)?;
 
-    buf[0] = fw_trans_id.0[0];
-    buf[1] = fw_trans_id.0[1];
+    link.buf[0] = trans_id.0[0];
+    link.buf[1] = trans_id.0[1];
 
-    forwarder.send_remote(&buf[..len])
-        .await
-        .map_err(Error::Io)
+    link.forward_query(len).await
+}
+
+struct BackwardLink<'a> {
+    forwarder: &'a Forwarder,
+    buf: [u8; 65536],
+}
+
+impl<'a> BackwardLink<'a> {
+    async fn recv_remote_response(&mut self) -> Result<usize> {
+        self.forwarder.recv_remote(&mut self.buf)
+            .await
+            .map_err(Error::Io)
+    }
+
+    async fn forward_response(&mut self, len: usize, addr: SocketAddr) -> Result<usize> {
+        self.forwarder.send_local(&self.buf[..len], addr)
+            .await
+            .map_err(Error::Io)
+    }
 }
 
 async fn send_back(
-    forwarder: &Forwarder,
-    buf: &mut Packet,
+    link: &mut BackwardLink<'_>,
     trans_storage: &TransStorage
 ) -> Result<usize> {
-    let len = forwarder.recv_remote(buf)
-            .await
-            .map_err(Error::Io)?;
+    let len = link.recv_remote_response().await?;
 
-    let packet = &mut buf[..len];
+    let packet = &mut link.buf[..len];
     let (_, query) = parse_query(packet)
         .map_err(Error::ParseError)?;
 
@@ -118,9 +142,7 @@ async fn send_back(
     packet[0] = trans.id.0[0];
     packet[1] = trans.id.0[1];
 
-    forwarder.send_local(packet, trans.addr)
-            .await
-            .map_err(Error::Io)
+    link.forward_response(len, trans.addr).await
 }
 
 #[tokio::main(flavor = "current_thread")]
@@ -136,20 +158,20 @@ async fn main() -> Result<()> {
 
     let filter = make_filter()?;
 
-    let mut req_buf = [0; 65536];
-    let mut resp_buf = [0; 65536];
+    let mut forward_link = ForwardLink { forwarder: &forwarder, buf: [0; 65536] };
+    let mut backward_link = BackwardLink { forwarder: &forwarder, buf: [0; 65536] };
     
     let trans_storage = TransStorage::new();
 
     loop {
         tokio::select! {
-            res = send_forward(&forwarder, &mut req_buf, &trans_storage, &filter) => {
+            res = send_forward(&mut forward_link, &trans_storage, &filter) => {
                 if let Err(e) = res {
                     println!("Error sending forward: {}", e);
                     continue;
                 }
             }
-            res = send_back(&forwarder, &mut resp_buf, &trans_storage) => {
+            res = send_back(&mut backward_link, &trans_storage) => {
                 if let Err(e) = res {
                     println!("Error sending back: {}", e);
                     continue;

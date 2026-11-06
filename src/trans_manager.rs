@@ -8,7 +8,7 @@ use crate::{cleanup_timer::{CleanupTimer, elapsed_since}, dns_packet::PacketId, 
 pub struct TransStorage {
     trans_map: RefCell<TransMap>,
     cleanup_timer: RefCell<CleanupTimer>,
-    epoch: Instant,
+    // epoch: Instant,
 }
 
 const CLEANUP_INTERVAL: Duration = Duration::from_secs(1);
@@ -29,12 +29,12 @@ impl TransStorage {
         Self {
             trans_map: RefCell::new(TransMap::new()),
             cleanup_timer: RefCell::new(CleanupTimer::new(CLEANUP_INTERVAL)),
-            epoch: Instant::now(),
         }
     }
 
     pub fn insert(&self, origin: SocketAddr, packet: &[u8], query: &Query) -> Result<PacketId> {
-        let trans = make_transaction(origin, packet, query, self.epoch);
+        let epoch = self.cleanup_timer.borrow().epoch();
+        let trans = make_transaction(origin, packet, query, epoch);
         self.trans_map
             .borrow_mut()
             .insert(trans)
@@ -53,8 +53,9 @@ impl TransStorage {
 
     pub async fn cleanup_expired(&self) -> usize {
         self.cleanup_timer.borrow_mut().tick().await;
-        
-        let now = elapsed_since(self.epoch);
+
+        let epoch = self.cleanup_timer.borrow().epoch();
+        let now = elapsed_since(epoch);
         self.trans_map
             .borrow_mut()
             .expire_older_than(now, MAX_TRANS_AGE_MS)
