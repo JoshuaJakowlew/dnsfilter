@@ -2,7 +2,9 @@ use std::net::{IpAddr, SocketAddr};
 use std::net::Ipv4Addr;
 use std::path::Path;
 
+use clap::Parser;
 use thiserror::Error;
+use tokio::signal::unix::{SignalKind, signal};
 
 use crate::dns::parser::Query;
 use crate::filter::loader::{DomainFileLoader, FilterLoader};
@@ -14,8 +16,7 @@ mod cleanup_timer;
 mod filter;
 mod forwarder;
 mod trans;
-
-const DEFAULT_FILTER_PATH: &str = "assets/filter.txt";
+mod cli;
 
 #[derive(Error, Debug)]
 enum Error {
@@ -125,18 +126,21 @@ async fn send_back(
 
 #[tokio::main(flavor = "current_thread")]
 async fn main() -> Result<()> {
-    let forwarder = Forwarder::bind(5354).await?;
-    
-    let remote_addr = SocketAddr::new(IpAddr::V4(Ipv4Addr::new(1, 1, 1, 1)), 53);
-    forwarder.connect(remote_addr).await?;
+    let args = cli::Args::parse();
 
-    let filter = DomainFileLoader::from_file(Path::new(DEFAULT_FILTER_PATH))?;
+    let forwarder = Forwarder::bind(args.port).await?;
+    forwarder.connect(args.remote_addr).await?;
+
+    let filter = DomainFileLoader::from_file(&args.filter_path)?;
     println!("Loaded {} domains from file", filter.len());
 
     let mut forward_link = ForwardLink { forwarder: &forwarder, buf: [0; 65536] };
     let mut backward_link = BackwardLink { forwarder: &forwarder, buf: [0; 65536] };
     
     let trans_storage = TransStorage::new();
+
+    let mut terminate = signal(SignalKind::terminate())?;
+    let mut interrupt = signal(SignalKind::interrupt())?;
 
     loop {
         tokio::select! {
@@ -156,6 +160,14 @@ async fn main() -> Result<()> {
                 if removed > 0 {
                     println!("Cleaned up: {} expired transactions", removed);
                 }
+            }
+            _ = terminate.recv() => {
+                println!("Got terminate signal");
+                return Ok(());
+            }
+            _ = interrupt.recv() => {
+                println!("Got interrupt signal");
+                return Ok(());
             }
         }
     }

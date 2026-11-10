@@ -3,8 +3,18 @@ name = "dnsfilter"
 version = "0.1.0"
 edition = "2024"
 
+[profile.release]
+opt-level = 3
+lto = "fat"
+codegen-units = 1
+panic = "abort"
+strip = true
+debug = false
+incremental = false
+
 [dependencies]
+clap = { version = "4.6.7", features = ["derive"] }
 hashbrown = { version = "0.17.1", default-features = false, features = ["inline-more"] }
 rapidhash = { version = "4.5.1", default-features = false }
 thiserror = "2.0.21"
-tokio = { version = "1.54.1", features = ["rt", "net", "time", "macros"] }
+tokio = { version = "1.54.1", features = ["rt", "net", "time", "signal", "macros"] }
