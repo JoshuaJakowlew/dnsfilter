@@ -1,11 +1,13 @@
 use std::net::{IpAddr, SocketAddr};
 use std::net::Ipv4Addr;
+use std::path::Path;
 
 use thiserror::Error;
 
 use crate::dns::parser::Query;
+use crate::filter::loader::{DomainFileLoader, FilterLoader};
 use crate::trans::storage::TransStorage;
-use crate::{dns::{packet::{Packet, QnameBuffer}, parser::{ParseError, parse_query}, response::write_blocked_response}, filter::qname_set::{QnameSet, QnamePool}, forwarder::Forwarder};
+use crate::{dns::{packet::{Packet}, parser::parse_query, response::write_blocked_response}, filter::qname_set::{QnameSet}, forwarder::Forwarder};
 
 mod dns;
 mod cleanup_timer;
@@ -13,39 +15,24 @@ mod filter;
 mod forwarder;
 mod trans;
 
+const DEFAULT_FILTER_PATH: &str = "assets/filter.txt";
+
 #[derive(Error, Debug)]
 enum Error {
     #[error("I/O error: {0}")]
-    Io(std::io::Error),
+    Io(#[from] std::io::Error),
     #[error("Transaction: {0}")]
-    Transaction(trans::storage::Error),
+    Transaction(#[from] trans::storage::Error),
     #[error("Failed to parse packet: {0}")]
-    ParseError(ParseError),
+    ParseError(#[from] dns::parser::ParseError),
     #[error("Failed to make filter")]
-    FilterError,
+    FilterError(#[from] filter::loader::Error),
 }
 
 type Result<T> = std::result::Result<T, Error>;
 
-fn make_filter() -> Result<QnameSet> {
-    let domains = vec![
-        "ya.ru",
-        "vk.com",
-    ];
-
-    let mut pool = QnamePool::new();
-    for domain in domains {
-        let qname = QnameBuffer::from_domain(domain)
-            .ok_or(Error::FilterError)?;
-        pool.push(&qname);
-    }
-
-    let filter = QnameSet::from_unique_pool(pool);
-    Ok(filter)
-}
-
 fn apply_filter(filter: &QnameSet, packet: &mut Packet, len: usize, query: &Query, q_end: usize) -> Result<(usize, bool)> {
-    if filter.contains(&query.qname) {
+    if filter.contains_hierarchical(&query.qname) {
         let resp_size = write_blocked_response(packet, len, q_end);
         return Ok((resp_size, false));
     }
@@ -84,8 +71,7 @@ async fn send_forward(
 ) -> Result<usize> {
     let (len, addr) = link.recv_query().await?;
 
-    let (q_end, query) = parse_query(&link.buf[..len])
-        .map_err(Error::ParseError)?;
+    let (q_end, query) = parse_query(&link.buf[..len])?;
 
     if let (resp_len, false) = apply_filter(&filter, &mut link.buf, len, &query, q_end)? {      
         link.send_blocked_response(resp_len, addr).await?;
@@ -93,8 +79,7 @@ async fn send_forward(
     }
 
     let trans_id = trans_storage
-        .insert(addr, &link.buf[..len], &query)
-        .map_err(Error::Transaction)?;
+        .insert(addr, &link.buf[..len], &query)?;
 
     link.buf[0] = trans_id.0[0];
     link.buf[1] = trans_id.0[1];
@@ -128,12 +113,9 @@ async fn send_back(
     let len = link.recv_remote_response().await?;
 
     let packet = &mut link.buf[..len];
-    let (_, query) = parse_query(packet)
-        .map_err(Error::ParseError)?;
+    let (_, query) = parse_query(packet)?;
 
-    let trans = trans_storage
-        .extract(packet, &query)
-        .map_err(Error::Transaction)?;
+    let trans = trans_storage.extract(packet, &query)?;
 
     packet[0] = trans.id.0[0];
     packet[1] = trans.id.0[1];
@@ -143,16 +125,12 @@ async fn send_back(
 
 #[tokio::main(flavor = "current_thread")]
 async fn main() -> Result<()> {
-    let forwarder = Forwarder::bind(5354)
-        .await
-        .map_err(Error::Io)?;
+    let forwarder = Forwarder::bind(5354).await?;
     
     let remote_addr = SocketAddr::new(IpAddr::V4(Ipv4Addr::new(1, 1, 1, 1)), 53);
-    forwarder.connect(remote_addr)
-        .await
-        .map_err(Error::Io)?;
+    forwarder.connect(remote_addr).await?;
 
-    let filter = make_filter()?;
+    let filter = DomainFileLoader::from_file(Path::new(DEFAULT_FILTER_PATH))?;
 
     let mut forward_link = ForwardLink { forwarder: &forwarder, buf: [0; 65536] };
     let mut backward_link = BackwardLink { forwarder: &forwarder, buf: [0; 65536] };
