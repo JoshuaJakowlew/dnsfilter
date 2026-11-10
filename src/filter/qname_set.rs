@@ -106,6 +106,8 @@ impl QnameSet {
     }
 
     pub fn contains_hierarchical(&self, name: &Qname) -> bool {
-        todo!()
+        name
+            .suffixes()
+            .any(|suffix| self.contains(suffix))
     }
 }
