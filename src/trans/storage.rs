@@ -3,12 +3,12 @@ use std::{cell::RefCell, net::SocketAddr, time::Duration};
 use thiserror::Error;
 use tokio::time::Instant;
 
-use crate::{cleanup_timer::{CleanupTimer, elapsed_since}, dns::{packet::PacketId, parser::Query}, packet_hash::hash_query, trans_map::{Transaction, TransMap}};
+use super::map::{Transaction, TransMap};
+use crate::{cleanup_timer::{CleanupTimer, elapsed_since}, dns::{packet::PacketId, parser::{hash_query, Query}}};
 
 pub struct TransStorage {
     trans_map: RefCell<TransMap>,
     cleanup_timer: RefCell<CleanupTimer>,
-    // epoch: Instant,
 }
 
 const CLEANUP_INTERVAL: Duration = Duration::from_secs(1);

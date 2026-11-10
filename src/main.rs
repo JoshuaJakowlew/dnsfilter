@@ -4,23 +4,21 @@ use std::net::Ipv4Addr;
 use thiserror::Error;
 
 use crate::dns::parser::Query;
-use crate::trans_manager::TransStorage;
-use crate::{dns::{packet::{Packet, QnameBuffer}, parser::{ParseError, parse_query}, response::write_blocked_response}, filter::{QnameFilter, QnamePool}, forwarder::Forwarder};
+use crate::trans::storage::TransStorage;
+use crate::{dns::{packet::{Packet, QnameBuffer}, parser::{ParseError, parse_query}, response::write_blocked_response}, filter::qname_set::{QnameFilter, QnamePool}, forwarder::Forwarder};
 
-mod trans_map;
 mod dns;
-mod packet_hash;
 mod cleanup_timer;
 mod filter;
 mod forwarder;
-mod trans_manager;
+mod trans;
 
 #[derive(Error, Debug)]
 enum Error {
     #[error("I/O error: {0}")]
     Io(std::io::Error),
     #[error("Transaction: {0}")]
-    Transaction(trans_manager::Error),
+    Transaction(trans::storage::Error),
     #[error("Failed to parse packet: {0}")]
     ParseError(ParseError),
     #[error("Failed to make filter")]

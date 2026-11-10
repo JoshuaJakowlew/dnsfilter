@@ -99,4 +99,3 @@ impl QnameBuffer {
         self.buffer[start..end].write_copy_of_slice(segment)
     }
 }
-
