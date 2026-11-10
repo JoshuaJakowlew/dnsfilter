@@ -151,6 +151,10 @@ impl Qname {
     pub fn segments(&self) -> Segments<'_> {
         Segments { rest: &self.0 }
     }
+
+    pub fn suffixes(&self) -> Suffixes<'_> {
+        Suffixes { rest: &self.0 }
+    }
 }
 
 impl<'a> IntoIterator for &'a Qname {
@@ -196,5 +200,30 @@ impl<'a> Iterator for Segments<'a> {
 }
 
 impl FusedIterator for Segments<'_> {}
+
+#[derive(Clone)]
+pub struct Suffixes<'a> {
+    rest: &'a [u8],
+}
+
+impl<'a> Iterator for Suffixes<'a> {
+    type Item = &'a Qname;
+
+    fn next(&mut self) -> Option<&'a Qname> {
+        let (&slen, tail) = self.rest.split_first()?;
+        let slen = slen as usize;
+
+        if slen == 0 || slen > tail.len() {
+            self.rest = &[];
+            return None;
+        }
+
+        let suffix = Qname::from_bytes_unchecked(self.rest);
+        self.rest = &tail[slen..];
+        Some(suffix)
+    }
+}
+
+impl FusedIterator for Suffixes<'_> {}
 
 
