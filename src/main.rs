@@ -2,7 +2,6 @@ use std::net::{IpAddr, SocketAddr};
 use std::net::Ipv4Addr;
 use std::path::Path;
 
-use clap::Parser;
 use thiserror::Error;
 use tokio::signal::unix::{SignalKind, signal};
 
@@ -126,7 +125,7 @@ async fn send_back(
 
 #[tokio::main(flavor = "current_thread")]
 async fn main() -> Result<()> {
-    let args = cli::Args::parse();
+    let args: cli::Args = argh::from_env();
 
     let forwarder = Forwarder::bind(args.port).await?;
     forwarder.connect(args.remote_addr).await?;

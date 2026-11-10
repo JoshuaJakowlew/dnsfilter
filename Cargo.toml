@@ -13,7 +13,7 @@ debug = false
 incremental = false
 
 [dependencies]
-clap = { version = "4.6.7", features = ["derive"] }
+argh = { version = "0.1.19", default-features = false, features = ["help"] }
 hashbrown = { version = "0.17.1", default-features = false, features = ["inline-more"] }
 rapidhash = { version = "4.5.1", default-features = false }
 thiserror = "2.0.21"

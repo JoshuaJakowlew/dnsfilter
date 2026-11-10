@@ -1,14 +1,17 @@
 use std::{net::SocketAddr, path::PathBuf};
 
-use clap::Parser;
+use argh::FromArgs;
 
-#[derive(Parser, Debug)]
-#[command(author, version, about, long_about = None)]
+/// DNS filtering forwarder
+#[derive(FromArgs, Debug)]
 pub struct Args {
-    #[arg(short, long)]
+    /// path to the file with blocked domains
+    #[argh(option, short = 'f')]
     pub filter_path: PathBuf,
-    #[arg(short, long)]
+    /// local port to listen on
+    #[argh(option, short = 'p')]
     pub port: u16,
-    #[arg(short, long)]
+    /// upstream DNS server address
+    #[argh(option, short = 'r')]
     pub remote_addr: SocketAddr,
 }
