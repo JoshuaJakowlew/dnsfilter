@@ -3,21 +3,14 @@ use std::time::Duration;
 use tokio::time::{Instant, Interval, MissedTickBehavior, interval_at};
 
 pub struct CleanupTimer {
-    epoch: Instant,
     interval: Interval,
 }
 
 impl CleanupTimer {
-    pub fn new(period: Duration) -> Self {
-        let epoch = Instant::now();
+    pub fn new(epoch: Instant, period: Duration) -> Self {
         Self {
-            epoch,
             interval: Self::interval(epoch, period),
         }
-    }
-
-    pub fn epoch(&self) -> Instant {
-        self.epoch
     }
 
     pub fn tick(&mut self) -> impl Future<Output = Instant>{
