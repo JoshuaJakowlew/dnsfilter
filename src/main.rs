@@ -131,6 +131,7 @@ async fn main() -> Result<()> {
     forwarder.connect(remote_addr).await?;
 
     let filter = DomainFileLoader::from_file(Path::new(DEFAULT_FILTER_PATH))?;
+    println!("Loaded {} domains from file", filter.len());
 
     let mut forward_link = ForwardLink { forwarder: &forwarder, buf: [0; 65536] };
     let mut backward_link = BackwardLink { forwarder: &forwarder, buf: [0; 65536] };
@@ -152,7 +153,9 @@ async fn main() -> Result<()> {
                 }
             }
             removed = trans_storage.cleanup_expired() => {
-                println!("Cleaned up: {} expired transactions", removed);
+                if removed > 0 {
+                    println!("Cleaned up: {} expired transactions", removed);
+                }
             }
         }
     }

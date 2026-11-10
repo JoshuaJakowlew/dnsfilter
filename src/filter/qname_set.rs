@@ -117,6 +117,10 @@ impl QnameSet {
         Some(Self { table, pool })
     }
 
+    pub fn len(&self) -> usize {
+        self.pool.len()
+    }
+
     pub fn contains(&self, name: &Qname) -> bool {
         let hash = hash_qname(name);
         self.table
