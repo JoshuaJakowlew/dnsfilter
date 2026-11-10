@@ -1,6 +1,7 @@
 use std::{hash::Hasher, iter::FusedIterator};
 
 use hashbrown::HashTable;
+use hashbrown::hash_table::Entry;
 use rapidhash::fast::RapidHasher;
 
 use crate::dns::packet::Qname;
@@ -93,6 +94,27 @@ impl QnameSet {
         }
 
         Self { table, pool }   
+    }
+
+    /// Returns None if pool contains duplicate domains
+    pub fn try_from_pool(pool: QnamePool) -> Option<Self> {
+        let mut table = HashTable::with_capacity(pool.len());
+
+        for (offset, name) in pool.iter() {
+            let hash = hash_qname(name);
+            match table.entry(
+                hash,
+                |&stored| pool.get(stored) == name,
+                |&stored| hash_qname(pool.get(stored)),
+            ) {
+                Entry::Occupied(_) => return None,
+                Entry::Vacant(entry) => {
+                    entry.insert(offset);
+                }
+            }
+        }
+
+        Some(Self { table, pool })
     }
 
     pub fn contains(&self, name: &Qname) -> bool {
