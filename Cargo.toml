@@ -4,7 +4,7 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
-hashbrown = { version = "0.17.1", features = ["inline-more", "allocator-api2"] }
-rapidhash = "4.5.1"
+hashbrown = { version = "0.17.1", default-features = false, features = ["inline-more"] }
+rapidhash = { version = "4.5.1", default-features = false }
 thiserror = "2.0.21"
-tokio = { version = "1.54.1", features = ["rt", "net", "time", "macros", "signal"] }
+tokio = { version = "1.54.1", features = ["rt", "net", "time", "macros"] }
