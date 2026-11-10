@@ -1,7 +1,7 @@
 use std::mem::MaybeUninit;
 use std::net::SocketAddr;
 
-use crate::dns_packet::PacketId;
+use crate::dns::packet::PacketId;
 
 #[derive(Clone, Copy)]
 pub struct Transaction {

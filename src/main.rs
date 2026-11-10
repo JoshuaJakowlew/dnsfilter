@@ -3,14 +3,12 @@ use std::net::Ipv4Addr;
 
 use thiserror::Error;
 
-use crate::dns_parser::Query;
+use crate::dns::parser::Query;
 use crate::trans_manager::TransStorage;
-use crate::{dns_packet::{Packet, QnameBuffer}, dns_parser::{ParseError, parse_query}, dns_response::write_blocked_response, filter::{QnameFilter, QnamePool}, forwarder::Forwarder};
+use crate::{dns::{packet::{Packet, QnameBuffer}, parser::{ParseError, parse_query}, response::write_blocked_response}, filter::{QnameFilter, QnamePool}, forwarder::Forwarder};
 
 mod trans_map;
-mod dns_parser;
-mod dns_packet;
-mod dns_response;
+mod dns;
 mod packet_hash;
 mod cleanup_timer;
 mod filter;

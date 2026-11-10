@@ -3,7 +3,7 @@ use std::hash::Hasher;
 use hashbrown::HashTable;
 use rapidhash::fast::RapidHasher;
 
-use crate::dns_packet::QnameBuffer;
+use crate::dns::packet::QnameBuffer;
 
 pub struct QnamePool {
     buffer: Vec<u8>,

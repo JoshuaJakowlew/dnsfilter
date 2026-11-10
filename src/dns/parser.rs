@@ -1,6 +1,6 @@
 use thiserror::Error;
 
-use crate::dns_packet::QnameBuffer;
+use super::packet::QnameBuffer;
 
 #[derive(Error, Debug)]
 pub enum ParseError {

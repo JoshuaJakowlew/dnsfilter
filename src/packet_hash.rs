@@ -2,7 +2,7 @@ use std::hash::Hasher;
 
 use rapidhash::fast::RapidHasher;
 
-use crate::dns_parser::Query;
+use crate::dns::parser::Query;
 
 pub fn hash_query(query: &Query) -> u64 {
     let mut hasher = RapidHasher::default();
