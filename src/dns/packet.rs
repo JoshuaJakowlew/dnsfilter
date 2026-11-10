@@ -1,4 +1,7 @@
+use std::fmt;
+use std::iter::FusedIterator;
 use std::mem::MaybeUninit;
+use std::ops::Deref;
 
 pub const MAX_PACKET_SIZE: usize = 65536;
 
@@ -85,10 +88,9 @@ impl QnameBuffer {
         self.len
     }
 
-    pub fn as_slice(&self) -> &[u8] {
-        unsafe {
-            self.buffer[..self.len].assume_init_ref()
-        }
+    pub fn as_qname(&self) -> &Qname {
+        let bytes = unsafe { self.buffer[..self.len].assume_init_ref() };
+        Qname::from_bytes_unchecked(bytes)
     }
 
     // Returns a slice of the appended segment.
@@ -99,3 +101,100 @@ impl QnameBuffer {
         self.buffer[start..end].write_copy_of_slice(segment)
     }
 }
+
+impl Deref for QnameBuffer {
+    type Target = Qname;
+
+    fn deref(&self) -> &Qname {
+        self.as_qname()
+    }
+}
+
+#[derive(PartialEq, Eq, Hash)]
+#[repr(transparent)]
+pub struct Qname([u8]);
+
+impl Qname {
+    pub fn from_bytes(bytes: &[u8]) -> Option<&Self> {
+        if bytes.len() > MAX_QNAME {
+            return None;
+        }
+
+        let mut pos = 0;
+        loop {
+            let slen = *bytes.get(pos)? as usize;
+            if slen > MAX_QNAME_SEGMENT {
+                return None;
+            }
+            pos += 1 + slen;
+            if slen == 0 {
+                break;
+            }
+        }
+
+        (pos == bytes.len()).then(|| Self::from_bytes_unchecked(bytes))
+    }
+
+    pub(crate) fn from_bytes_unchecked(bytes: &[u8]) -> &Self {
+        // SAFETY: Qname is repr(transparent) over [u8].
+        unsafe { &*(bytes as *const [u8] as *const Self) }
+    }
+
+    pub fn as_bytes(&self) -> &[u8] {
+        &self.0
+    }
+
+    pub fn len(&self) -> usize {
+        self.0.len()
+    }
+
+    pub fn segments(&self) -> Segments<'_> {
+        Segments { rest: &self.0 }
+    }
+}
+
+impl<'a> IntoIterator for &'a Qname {
+    type Item = &'a [u8];
+    type IntoIter = Segments<'a>;
+
+    fn into_iter(self) -> Segments<'a> {
+        self.segments()
+    }
+}
+
+impl fmt::Debug for Qname {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str("Qname(\"")?;
+        for segment in self.segments() {
+            write!(f, "{}.", segment.escape_ascii())?;
+        }
+        f.write_str("\")")
+    }
+}
+
+#[derive(Clone)]
+pub struct Segments<'a> {
+    rest: &'a [u8],
+}
+
+impl<'a> Iterator for Segments<'a> {
+    type Item = &'a [u8];
+
+    fn next(&mut self) -> Option<&'a [u8]> {
+        let (&slen, tail) = self.rest.split_first()?;
+        let slen = slen as usize;
+
+        if slen == 0 || slen > tail.len() {
+            self.rest = &[];
+            return None;
+        }
+
+        let (segment, rest) = tail.split_at(slen);
+        self.rest = rest;
+        Some(segment)
+    }
+}
+
+impl FusedIterator for Segments<'_> {}
+
+

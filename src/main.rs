@@ -5,7 +5,7 @@ use thiserror::Error;
 
 use crate::dns::parser::Query;
 use crate::trans::storage::TransStorage;
-use crate::{dns::{packet::{Packet, QnameBuffer}, parser::{ParseError, parse_query}, response::write_blocked_response}, filter::qname_set::{QnameFilter, QnamePool}, forwarder::Forwarder};
+use crate::{dns::{packet::{Packet, QnameBuffer}, parser::{ParseError, parse_query}, response::write_blocked_response}, filter::qname_set::{QnameSet, QnamePool}, forwarder::Forwarder};
 
 mod dns;
 mod cleanup_timer;
@@ -27,7 +27,7 @@ enum Error {
 
 type Result<T> = std::result::Result<T, Error>;
 
-fn make_filter() -> Result<QnameFilter> {
+fn make_filter() -> Result<QnameSet> {
     let domains = vec![
         "ya.ru",
         "vk.com",
@@ -40,12 +40,12 @@ fn make_filter() -> Result<QnameFilter> {
         pool.push(&qname);
     }
 
-    let filter = QnameFilter::from_unique_pool(pool);
+    let filter = QnameSet::from_unique_pool(pool);
     Ok(filter)
 }
 
-fn apply_filter(filter: &QnameFilter, packet: &mut Packet, len: usize, query: &Query, q_end: usize) -> Result<(usize, bool)> {
-    if filter.contains(query.qname.as_slice()) {
+fn apply_filter(filter: &QnameSet, packet: &mut Packet, len: usize, query: &Query, q_end: usize) -> Result<(usize, bool)> {
+    if filter.contains(&query.qname) {
         let resp_size = write_blocked_response(packet, len, q_end);
         return Ok((resp_size, false));
     }
@@ -80,7 +80,7 @@ impl<'a> ForwardLink<'a> {
 async fn send_forward(
     link: &mut ForwardLink<'_>,
     trans_storage: &TransStorage,
-    filter: &QnameFilter,
+    filter: &QnameSet,
 ) -> Result<usize> {
     let (len, addr) = link.recv_query().await?;
 

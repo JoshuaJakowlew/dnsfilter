@@ -1,9 +1,9 @@
-use std::hash::Hasher;
+use std::{hash::Hasher, iter::FusedIterator};
 
 use hashbrown::HashTable;
 use rapidhash::fast::RapidHasher;
 
-use crate::dns::packet::QnameBuffer;
+use crate::dns::packet::Qname;
 
 pub struct QnamePool {
     buffer: Vec<u8>,
@@ -22,8 +22,8 @@ impl QnamePool {
         self.len
     }
 
-    pub fn push(&mut self, name: &QnameBuffer) -> usize {
-        let name = name.as_slice();
+    pub fn push(&mut self, name: &Qname) -> usize {
+        let name = name.as_bytes();
         let offset = self.buffer.len();
 
         self.buffer.reserve(1 + name.len());
@@ -35,10 +35,10 @@ impl QnamePool {
         offset
     }
 
-    pub fn get(&self, offset: usize) -> &[u8] {
+    pub fn get(&self, offset: usize) -> &Qname {
         let len = self.buffer[offset] as usize;
         let name_offset = offset + 1;
-        &self.buffer[name_offset..name_offset + len]
+        Qname::from_bytes_unchecked(&self.buffer[name_offset..name_offset + len])
     }
 
     pub fn iter(&self) -> QnamePoolIter<'_> {
@@ -55,30 +55,31 @@ pub struct QnamePoolIter<'a> {
 }
 
 impl<'a> Iterator for QnamePoolIter<'a> {
-    type Item = (usize, &'a [u8]);
+    type Item = (usize, &'a Qname);
     fn next(&mut self) -> Option<Self::Item> {
         let start = self.offset;
         let len = *self.buffer.get(start)? as usize;
         let name_start = start + 1;
         let name = &self.buffer[name_start..name_start + len];
         self.offset = start + 1 + len;
-        Some((start, name))
+        Some((start, Qname::from_bytes_unchecked(name)))
     }
 }
 
-fn hash_qname(name: &[u8]) -> u64 {
+impl FusedIterator for QnamePoolIter<'_> {}
+
+fn hash_qname(name: &Qname) -> u64 {
     let mut hasher = RapidHasher::default();
-    hasher.write(name);
+    hasher.write(name.as_bytes());
     hasher.finish()
 }
 
-pub struct QnameFilter {
+pub struct QnameSet {
     table: HashTable<usize>,
     pool: QnamePool,
 }
 
-impl QnameFilter {
-    /// Constructs a QnameFilter from a pool of unique Qnames.
+impl QnameSet {
     pub fn from_unique_pool(pool: QnamePool) -> Self {
         let mut table = HashTable::with_capacity(pool.len());
 
@@ -94,7 +95,7 @@ impl QnameFilter {
         Self { table, pool }   
     }
 
-    pub fn contains(&self, name: &[u8]) -> bool {
+    pub fn contains(&self, name: &Qname) -> bool {
         let hash = hash_qname(name);
         self.table
             .find(
@@ -104,5 +105,7 @@ impl QnameFilter {
             .is_some()
     }
 
-    
+    pub fn contains_hierarchical(&self, name: &Qname) -> bool {
+        todo!()
+    }
 }
