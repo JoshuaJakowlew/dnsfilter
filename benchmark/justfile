@@ -12,6 +12,14 @@ bench:
     trap '{{compose}} down' EXIT
     {{compose}} build --quiet && {{compose}} run --rm loadgen
 
+# Profile dnsfilter with perf under dnsperf load, the report goes to results/latest-profile
+profile scenario="pass" outstanding="32":
+    #!/usr/bin/env bash
+    mkdir -p data results
+    export CARGO_PROFILE=profiling
+    trap '{{compose}} down' EXIT
+    {{compose}} build --quiet && {{compose}} run --rm profile {{scenario}} {{outstanding}}
+
 # Stop and remove the benchmark containers
 down:
     {{compose}} down

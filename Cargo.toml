@@ -12,6 +12,11 @@ strip = true
 debug = false
 incremental = false
 
+[profile.profiling]
+inherits = "release"
+debug = true
+strip = false
+
 [dependencies]
 argh = { version = "0.1.19", default-features = false, features = ["help"] }
 hashbrown = { version = "0.17.1", default-features = false, features = ["inline-more"] }

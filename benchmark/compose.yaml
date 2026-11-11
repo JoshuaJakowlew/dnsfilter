@@ -1,5 +1,5 @@
 # dnsperf (loadgen) -> dnsfilter -> knotd (upstream), all on the host network over loopback.
-# Run with `just bench`; settings come from config/bench.env.
+# Run with `just bench` or `just profile`; settings come from config/bench.env.
 
 name: dnsfilter-bench
 
@@ -38,7 +38,9 @@ services:
     build:
       context: ..
       dockerfile: benchmark/docker/dnsfilter.Dockerfile
-    image: dnsfilter-bench-dnsfilter
+      args:
+        CARGO_PROFILE: ${CARGO_PROFILE:-release}
+    image: dnsfilter-bench-dnsfilter:${CARGO_PROFILE:-release}
     network_mode: host
     cpuset: ${FILTER_CPUS}
     command: ["-f", "/data/blocklist.txt", "-p", "${FILTER_PORT}", "-r", "127.0.0.1:${UPSTREAM_PORT}"]
@@ -54,6 +56,19 @@ services:
     <<: *loadgen
     cpuset: ${LOADGEN_CPUS}
     command: ["/scripts/bench.sh", "run"]
+    depends_on:
+      dnsfilter:
+        condition: service_started
+
+  # loadgen plus perf attached to dnsfilter: `just profile`
+  profile:
+    <<: *loadgen
+    profiles: [profile]
+    user: "0:0"
+    cpuset: ${LOADGEN_CPUS}
+    cap_add: [SYS_ADMIN, SYSLOG]
+    pid: service:dnsfilter
+    entrypoint: ["/scripts/bench.sh", "profile"]
     depends_on:
       dnsfilter:
         condition: service_started

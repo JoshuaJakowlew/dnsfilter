@@ -27,16 +27,18 @@ run. The containers are removed at the end, including after a failure or Ctrl+C.
 
 | Path                            | Content                                                                                             |
 | ------------------------------- | --------------------------------------------------------------------------------------------------- |
-| `compose.yaml`                  | services: `data` (one-shot generator), `upstream`, `dnsfilter`, `loadgen`                           |
+| `compose.yaml`                  | services: `data` (one-shot generator), `upstream`, `dnsfilter`, `loadgen`, `profile`                |
 | `config/bench.env`              | all settings                                                                                        |
 | `config/knot.conf`, `test.zone` | upstream configuration, mounted into the Knot container                                             |
-| `docker/`                       | `loadgen`: Debian trixie with dnsperf, kdig, gawk, gnuplot. `dnsfilter`: built from this repository |
-| `scripts/bench.sh`              | runs inside `loadgen`: data generation, matrix, ramps, report                                       |
+| `docker/`                       | `loadgen`: Debian trixie with dnsperf, kdig, gawk, gnuplot, perf. `dnsfilter`: from this repository |
+| `scripts/bench.sh`              | runs inside `loadgen`: data generation, matrix, ramps, report, profiling                            |
 | `scripts/dnsperf.awk`           | turns one dnsperf output into a CSV row                                                             |
 | `scripts/plots.gp`              | charts                                                                                              |
 
 
-Images: `cznic/knot:3.6` (official), and dnsperf/resperf 2.14 from the Debian package.
+Images: `cznic/knot:3.6` (official), and dnsperf/resperf 2.14 and perf 6.12 from Debian
+packages. `flamegraph.pl` comes from [FlameGraph](https://github.com/brendangregg/FlameGraph),
+pinned by commit and checksum, since Debian does not package a flame graph renderer.
 
 ## Environment
 
@@ -149,6 +151,55 @@ The matrix does not stop at an invalid run. The report is written in full, then 
 runs are printed and `just bench` exits with status 1. A non-zero exit means "do not trust
 these numbers". If the servers do not answer the sanity check before the matrix, the run is
 aborted.
+
+## Profiling
+
+```sh
+just profile              # scenario pass, 32 queries in flight
+just profile block 128
+```
+
+`just profile` shows where dnsfilter spends its CPU time under load. It builds dnsfilter with
+the `profiling` Cargo profile (release with debug info, not stripped) and starts the same data,
+Knot and dnsfilter as `just bench`. The `profile` service then runs the sanity check, a
+`WARMUP`-second dnsperf run, and one `PROFILE_DURATION`-second dnsperf run while `perf record`
+samples dnsfilter at `PROFILE_FREQ` Hz with call stacks.
+
+| File (in `results/profile-<date>/`, `results/latest-profile`) | Content                                       |
+| -------------------------------------------------------------- | --------------------------------------------- |
+| `flamegraph.svg`                                               | flame graph, open in a browser                |
+| `report.txt`                                                   | top objects and functions from `perf report`  |
+| `stacks.folded`                                                | collapsed stacks the flame graph is drawn from |
+| `dnsperf.txt`                                                  | dnsperf output of the profiled run            |
+| `meta.txt`                                                     | as in the benchmark, plus scenario and level  |
+
+In the flame graph the width of a frame is its share of samples, callers are below callees.
+Kernel frames are orange, user space frames red. Click a frame to zoom, Ctrl+F to search. With
+fat LTO almost all of dnsfilter is inlined into `dnsfilter::main::{closure#0}`; inlined
+functions still show up as their own frames. `report.txt` has three parts: self time per object
+(the kernel and its modules are in brackets, `[vdso]` is user space), self time per function,
+and total time of dnsfilter functions including their callees.
+
+Things to know when reading it:
+
+- The `[unknown]` libc frames right above `entry_SYSCALL_64` are glibc's `__syscall_cancel`
+  wrappers that issue the syscall. Debian's libc has no symbols for them.
+- `nf_*` and `nft_*` frames are the host firewall (Docker's rules), which also sees loopback
+  traffic. They are part of the environment and are in the benchmark numbers too.
+- Samples in JIT-compiled BPF code have no symbol and may be attributed to the nearest module
+  symbol, e.g. `rapl_check_unit_atom`.
+- perf costs a little throughput, so compare the qps in `dnsperf.txt` only with other profiles.
+
+User stacks are unwound from DWARF debug info (`--call-graph dwarf`), so dnsfilter needs no frame
+pointers and the unwinding goes through glibc, which has none. Debian trixie's perf 6.12 is used:
+the 7.x perf from backports unwinds with libdw only and produces broken user stacks here.
+
+No host settings are changed. The `profile` container runs as root with `CAP_SYS_ADMIN` and
+`CAP_SYSLOG` in dnsfilter's PID namespace: `CAP_SYS_ADMIN` overrides `perf_event_paranoid`
+(kernel samples included) and lets perf enter dnsfilter's mount namespace to read its binary;
+`CAP_SYSLOG` exposes kernel addresses in `/proc/kallsyms`, unless the host has
+`kernel.kptr_restrict = 2`. The recipe fails if the profile has no symbolized kernel frames or
+no dnsfilter symbols.
 
 ## Caveats
 

@@ -2,6 +2,8 @@
 # Runs inside the loadgen container.
 #   bench.sh data  generate the blocklist and query files into /data
 #   bench.sh run   run the matrix and the ramps, write the report into /results/<date>
+#   bench.sh profile <scenario> <outstanding>
+#                  profile dnsfilter under dnsperf load, write the report into /results/profile-<date>
 set -euo pipefail
 
 generate_data() {
@@ -112,8 +114,84 @@ write_meta() {
         echo "cpu=$(grep -m1 'model name' /proc/cpuinfo | cut -d: -f2- | xargs)"
         echo "kernel=$(uname -r)"
         echo "dnsperf=$(dnsperf -h 2>&1 | gawk '/^Version/ { print $2 }')"
-        env | grep -E '^(FILTER_SIZE|QUERY_COUNT|BLOCK_RATIO|SCENARIOS|OUTSTANDING|REPEATS|DURATION|WARMUP|CLIENTS|TIMEOUT|RAMP_|.*_CPUS)' | sort
+        env | grep -E '^(FILTER_SIZE|QUERY_COUNT|BLOCK_RATIO|SCENARIOS|OUTSTANDING|REPEATS|DURATION|WARMUP|CLIENTS|TIMEOUT|RAMP_|PROFILE_|.*_CPUS)' | sort
     } > "$dir/meta.txt"
+}
+
+summarize_stat() {
+    local queries qps
+    queries=$(gawk '/Queries completed:/ { print $3 }' "$dir/dnsperf.txt")
+    qps=$(gawk '/Queries per second:/ { print $4 }' "$dir/dnsperf.txt")
+    gawk -F, -v queries="$queries" -v qps="$qps" '
+        $1 ~ /^[0-9.]+$/ { v[$3] = $1 + 0 }
+        END {
+            per_query["instructions"] = "instructions/query"
+            per_query["cycles"] = "cycles/query"
+            per_query["branches"] = "branches/query"
+            per_query["branch-misses"] = "branch misses/query"
+            per_query["cache-references"] = "cache references/query"
+            per_query["cache-misses"] = "cache misses/query"
+            per_query["context-switches"] = "context switches/query"
+            order = "instructions cycles branches branch-misses cache-references cache-misses context-switches"
+            printf "queries: %.0f\nqps: %.0f\n", queries, qps
+            if (v["cycles"] > 0) printf "ipc: %.2f\n", v["instructions"] / v["cycles"]
+            n = split(order, events, " ")
+            for (i = 1; i <= n; i++) {
+                e = events[i]
+                if (e in v && queries > 0)
+                    printf "%s: " (e == "context-switches" ? "%.4f" : "%.2f") "\n", per_query[e], v[e] / queries
+            }
+            if (v["branches"] > 0)
+                printf "branch miss ratio: %.2f%%\n", 100 * v["branch-misses"] / v["branches"]
+            if (v["cache-references"] > 0)
+                printf "cache miss ratio: %.2f%%\n", 100 * v["cache-misses"] / v["cache-references"]
+        }' "$dir/stat.csv" > "$dir/stat.txt"
+}
+
+demangle() {
+    c++filt | sed -E 's/\[[0-9a-f]{16}\]//g'
+}
+
+report() {
+    perf report -i "$data" --stdio -q -g none --percent-limit 0.5 "$@" 2> /dev/null | demangle
+}
+
+profile() {
+    local scenario=$1 outstanding=$2 port queries data=/tmp/perf.data
+    read -r port queries <<< "$(target "$scenario")"
+    dnsperf=(dnsperf -s 127.0.0.1 -p "$port" -d "$queries" -q "$outstanding" -c "$CLIENTS" -t "$TIMEOUT")
+    "${dnsperf[@]}" -l "$WARMUP" > /dev/null 2>&1
+    local pid
+    pid=$(pgrep -x dnsfilter)
+    # Counting and sampling are separate perf sessions and run side by side.
+    perf stat -p "$pid" -x, -e task-clock,cycles,instructions,branches,branch-misses,\
+cache-references,cache-misses,context-switches -o "$dir/stat.csv" &
+    local stat_pid=$!
+    perf record -q -o "$data" -F "$PROFILE_FREQ" --call-graph dwarf -p "$pid" \
+        -- "${dnsperf[@]}" -l "$PROFILE_DURATION" -O suppress=timeout > "$dir/dnsperf.txt"
+    kill -INT "$stat_pid" 2> /dev/null || true
+    wait "$stat_pid" || true
+    summarize_stat
+    {
+        echo "# Self time by object, [...] is the kernel and its modules"
+        report --no-children --sort dso
+        echo -e "\n# Self time by function, [k] kernel, [.] user space"
+        report --no-children --sort dso,sym
+        echo -e "\n# Total time of dnsfilter functions, with callees"
+        report --children --sort sym | grep -E '\] <?dnsfilter::'
+    } > "$dir/report.txt"
+    # --kernel marks only vmlinux frames, module frames end in [module]
+    local folded=/tmp/stacks.folded
+    perf script -i "$data" -s /usr/lib/perf-core/scripts/python/stackcollapse.py -- --kernel 2> /dev/null \
+        | demangle | sed -E 's/([^;])(\[[a-z0-9_]+\])(;| )/\1\2_[k]\3/g' > "$folded"
+    flamegraph.pl --colors java --hash --width 1600 --title "dnsfilter: $scenario, $outstanding in flight" \
+        --subtitle "$(grep -h 'Queries per second' "$dir/dnsperf.txt" | xargs)" \
+        "$folded" > "$dir/flamegraph.svg"
+    grep -q '[[:alnum:]]_\[k\]' "$folded" \
+        || { echo "no kernel frames in the profile, perf lacks kernel access (see README)" >&2; return 1; }
+    grep -q 'dnsfilter::main' "$folded" \
+        || { echo "dnsfilter symbols are not resolved (see README)" >&2; return 1; }
+    rm -f "$folded"
 }
 
 case ${1:-run} in
@@ -139,5 +217,19 @@ case ${1:-run} in
         if gawk -F, 'NR > 1 && $15 != "yes" { bad = 1; print "INVALID: " $0 } END { exit !bad }' "$dir/runs.csv"; then
             exit 1
         fi
+        ;;
+    profile)
+        dir="/results/profile-$(date +%Y%m%d-%H%M%S)"
+        mkdir -p "$dir"
+        ln -sfn "$(basename "$dir")" /results/latest-profile
+        trap 'chown -hR --reference=/results "$dir" /results/latest-profile' EXIT
+        check
+        write_meta
+        echo "scenario=$2 outstanding=$3" >> "$dir/meta.txt"
+        profile "$2" "$3"
+
+        echo
+        cat "$dir/stat.txt"
+        echo "report: results/$(basename "$dir")"
         ;;
 esac
