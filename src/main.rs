@@ -1,7 +1,4 @@
-use std::net::{IpAddr, SocketAddr};
-use std::net::Ipv4Addr;
-use std::path::Path;
-
+use std::net::SocketAddr;
 use thiserror::Error;
 use tokio::signal::unix::{SignalKind, signal};
 
@@ -64,16 +61,16 @@ impl<'a> ForwardLink<'a> {
     }
 }
 
-async fn send_forward(
+async fn handle_query(
     link: &mut ForwardLink<'_>,
     trans_storage: &TransStorage,
     filter: &QnameSet,
+    len: usize,
+    addr: SocketAddr,
 ) -> Result<usize> {
-    let (len, addr) = link.recv_query().await?;
-
     let (q_end, query) = parse_query(&link.buf[..len])?;
 
-    if let (resp_len, false) = apply_filter(&filter, &mut link.buf, len, &query, q_end)? {      
+    if let (resp_len, false) = apply_filter(filter, &mut link.buf, len, &query, q_end)? {
         link.send_blocked_response(resp_len, addr).await?;
         return Ok(resp_len);
     }
@@ -106,12 +103,11 @@ impl<'a> BackwardLink<'a> {
     }
 }
 
-async fn send_back(
+async fn handle_response(
     link: &mut BackwardLink<'_>,
-    trans_storage: &TransStorage
+    trans_storage: &TransStorage,
+    len: usize,
 ) -> Result<usize> {
-    let len = link.recv_remote_response().await?;
-
     let packet = &mut link.buf[..len];
     let (_, query) = parse_query(packet)?;
 
@@ -143,16 +139,28 @@ async fn main() -> Result<()> {
 
     loop {
         tokio::select! {
-            res = send_forward(&mut forward_link, &trans_storage, &filter) => {
-                if let Err(e) = res {
-                    println!("Error sending forward: {}", e);
-                    continue;
+            res = forward_link.recv_query() => {
+                let (len, addr) = match res {
+                    Ok(v) => v,
+                    Err(e) => {
+                        println!("Error receiving query: {e}");
+                        continue;
+                    }
+                };
+                if let Err(e) = handle_query(&mut forward_link, &trans_storage, &filter, len, addr).await {
+                    println!("Error sending forward: {e}");
                 }
             }
-            res = send_back(&mut backward_link, &trans_storage) => {
-                if let Err(e) = res {
-                    println!("Error sending back: {}", e);
-                    continue;
+            res = backward_link.recv_remote_response() => {
+                let len = match res {
+                    Ok(v) => v,
+                    Err(e) => {
+                        println!("Error receiving response: {e}");
+                        continue;
+                    }
+                };
+                if let Err(e) = handle_response(&mut backward_link, &trans_storage, len).await {
+                    println!("Error sending back: {e}");
                 }
             }
             removed = trans_storage.cleanup_expired() => {
