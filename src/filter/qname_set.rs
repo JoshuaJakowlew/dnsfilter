@@ -81,21 +81,6 @@ pub struct QnameSet {
 }
 
 impl QnameSet {
-    pub fn from_unique_pool(pool: QnamePool) -> Self {
-        let mut table = HashTable::with_capacity(pool.len());
-
-        for (offset, name) in pool.iter() {
-            let hash = hash_qname(name);
-            table.insert_unique(
-                hash,
-                offset,
-                |&stored| hash_qname(pool.get(stored))
-            );
-        }
-
-        Self { table, pool }   
-    }
-
     /// Returns None if pool contains duplicate domains
     pub fn try_from_pool(pool: QnamePool) -> Option<Self> {
         let mut table = HashTable::with_capacity(pool.len());
