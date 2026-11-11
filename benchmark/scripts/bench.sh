@@ -107,6 +107,14 @@ run_ramps() {
     done
 }
 
+plot() {
+    local ramps="" scenario
+    for scenario in "$@"; do
+        [[ -s $dir/raw/ramp-$scenario.dat ]] && ramps="$ramps $scenario"
+    done
+    gnuplot -e "dir='$dir'; scenarios='$SCENARIOS'; ramps='$ramps'" /scripts/plots.gp
+}
+
 write_meta() {
     {
         echo "date=$(date -Iseconds)"
@@ -207,8 +215,10 @@ case ${1:-run} in
         write_meta
         run_matrix
         summarize
+        # Charts for the matrix exist even if a ramp is interrupted afterwards.
+        plot
         [[ -z $RAMP_SCENARIOS ]] || run_ramps
-        gnuplot -e "dir='$dir'; scenarios='$SCENARIOS'; ramps='$RAMP_SCENARIOS'" /scripts/plots.gp
+        plot $RAMP_SCENARIOS
 
         echo
         column -t -s, "$dir/summary.csv"
