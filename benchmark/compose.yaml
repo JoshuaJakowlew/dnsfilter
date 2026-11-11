@@ -1,0 +1,59 @@
+# dnsperf (loadgen) -> dnsfilter -> knotd (upstream), all on the host network over loopback.
+# Run with `just bench`; settings come from config/bench.env.
+
+name: dnsfilter-bench
+
+x-loadgen: &loadgen
+  build:
+    context: docker
+    dockerfile: loadgen.Dockerfile
+  image: dnsfilter-bench-loadgen
+  network_mode: host
+  user: ${BENCH_USER:-0:0}
+  env_file: config/bench.env
+  environment:
+    BENCH_COMMIT: ${BENCH_COMMIT:-unknown}
+    XDG_CACHE_HOME: /tmp
+  volumes:
+    - /etc/localtime:/etc/localtime:ro
+    - ./scripts:/scripts:ro
+    - ./data:/data
+    - ./results:/results
+
+services:
+  data:
+    <<: *loadgen
+    command: ["/scripts/bench.sh", "data"]
+
+  upstream:
+    image: cznic/knot:3.6
+    network_mode: host
+    cpuset: ${UPSTREAM_CPUS}
+    command: ["knotd", "-c", "/config/knot.conf"]
+    volumes:
+      - ./config:/config:ro
+    tmpfs: [/rundir, /storage]
+
+  dnsfilter:
+    build:
+      context: ..
+      dockerfile: benchmark/docker/dnsfilter.Dockerfile
+    image: dnsfilter-bench-dnsfilter
+    network_mode: host
+    cpuset: ${FILTER_CPUS}
+    command: ["-f", "/data/blocklist.txt", "-p", "${FILTER_PORT}", "-r", "127.0.0.1:${UPSTREAM_PORT}"]
+    volumes:
+      - ./data:/data:ro
+    depends_on:
+      data:
+        condition: service_completed_successfully
+      upstream:
+        condition: service_started
+
+  loadgen:
+    <<: *loadgen
+    cpuset: ${LOADGEN_CPUS}
+    command: ["/scripts/bench.sh", "run"]
+    depends_on:
+      dnsfilter:
+        condition: service_started

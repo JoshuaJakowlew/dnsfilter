@@ -1,0 +1,8 @@
+; Every name under pass.test resolves. Names under block.test do not exist,
+; so a blocked name leaking past dnsfilter comes back as NXDOMAIN.
+$ORIGIN test.
+$TTL 60
+@       SOA  ns hostmaster 1 3600 600 86400 60
+@       NS   ns
+ns      A    192.0.2.53
+*.pass  A    192.0.2.1

@@ -1,0 +1,20 @@
+# End-to-end benchmark of dnsfilter, see README.md. Settings: config/bench.env.
+
+compose := "docker compose --env-file config/bench.env"
+
+export BENCH_USER := `id -u` + ":" + `id -g`
+export BENCH_COMMIT := `git describe --always --dirty 2> /dev/null || echo unknown`
+
+# Run all scenarios and ramps, the report goes to results/latest
+bench:
+    #!/usr/bin/env bash
+    mkdir -p data results
+    trap '{{compose}} down' EXIT
+    {{compose}} build --quiet && {{compose}} run --rm loadgen
+
+# Stop and remove the benchmark containers
+down:
+    {{compose}} down
+
+clean: down
+    rm -rf data results
