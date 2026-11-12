@@ -30,7 +30,7 @@ impl QnamePool {
         self.buffer.reserve(1 + name.len());
         self.buffer.push(name.len() as u8);
         self.buffer.extend_from_slice(name);
-        
+
         self.len += 1;
 
         offset
