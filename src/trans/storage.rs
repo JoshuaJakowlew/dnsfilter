@@ -42,11 +42,11 @@ impl TransStorage {
             .insert(trans)
             .ok_or(Error::MapFull)
     }
-    
+
     pub fn extract(&self, packet: &[u8], query: &Query) -> Result<Transaction> {
         let id = PacketId::from_packet(packet);
         let hash = hash_query(&query);
-        
+
         self.trans_map
             .borrow_mut()
             .extract(id, hash)

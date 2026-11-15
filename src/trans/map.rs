@@ -44,7 +44,7 @@ impl TransMap {
         if self.occupancy.occupancy() == 0 {
             return 0;
         }
-        
+
         let mut count = 0usize;
 
         for c in 0..BITMAP_CHUNKS {
@@ -72,15 +72,11 @@ impl TransMap {
     }
 
     fn read(&self, index: usize) -> Transaction {
-        unsafe {
-            self.origins.get_unchecked(index).assume_init_read()
-        }
+        unsafe { self.origins.get_unchecked(index).assume_init_read() }
     }
 
     fn read_ref(&self, index: usize) -> &Transaction {
-        unsafe {
-            self.origins.get_unchecked(index).assume_init_ref()
-        }
+        unsafe { self.origins.get_unchecked(index).assume_init_ref() }
     }
 
     fn is_expired(trans: &Transaction, now_ms: u32, max_age_ms: u32) -> bool {
@@ -136,14 +132,14 @@ impl OccupancyBitmap {
             None
         }
     }
-    
+
     #[inline(always)]
     fn find_free(&mut self) -> Option<usize> {
         const CHUNK_INDEX_MASK: usize = BITMAP_CHUNKS - 1;
 
         let start = self.cursor;
         let mut i = start;
-        
+
         loop {
             let free_bit = self.chunk(i).trailing_ones();
             if free_bit < u64::BITS {
