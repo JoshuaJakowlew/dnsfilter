@@ -12,8 +12,9 @@ loadgen (dnsperf) ──► dnsfilter :15354 ──► upstream (Knot DNS) :1535
 
 Requires Docker with Compose and [just](https://github.com/casey/just).
 
+From the repository root:
+
 ```sh
-cd benchmark
 just bench
 ```
 
