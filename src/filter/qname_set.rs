@@ -5,18 +5,36 @@ use hashbrown::hash_table::Entry;
 use rapidhash::fast::RapidHasher;
 
 use crate::dns::packet::Qname;
+use crate::filter::pool_buffer::PoolBuffer;
 
 pub struct QnamePool {
-    buffer: Vec<u8>,
+    buffer: PoolBuffer,
     len: usize,
 }
 
 impl QnamePool {
     pub fn new() -> Self {
         Self {
-            buffer: Vec::new(),
+            buffer: PoolBuffer::Owned(Vec::new()),
             len: 0,
         }
+    }
+
+    /// Returns None if buffer is not a sequence of exactly `len` valid records
+    /// Record validation is equivalent to Qname::from_bytes.
+    pub fn from_buffer(buffer: PoolBuffer, len: usize) -> Option<Self> {
+        let mut offset = 0;
+        let mut count = 0;
+        while offset < buffer.len() {
+            let name_len = buffer[offset] as usize;
+            let name_start = offset + 1;
+            let name = buffer.get(name_start..name_start + name_len)?;
+            Qname::from_bytes(name)?;
+            offset = name_start + name_len;
+            count += 1;
+        }
+
+        (count == len).then_some(Self { buffer, len })
     }
 
     pub fn len(&self) -> usize {
@@ -25,11 +43,12 @@ impl QnamePool {
 
     pub fn push(&mut self, name: &Qname) -> usize {
         let name = name.as_bytes();
-        let offset = self.buffer.len();
+        let buffer = self.buffer.to_mut();
+        let offset = buffer.len();
 
-        self.buffer.reserve(1 + name.len());
-        self.buffer.push(name.len() as u8);
-        self.buffer.extend_from_slice(name);
+        buffer.reserve(1 + name.len());
+        buffer.push(name.len() as u8);
+        buffer.extend_from_slice(name);
 
         self.len += 1;
 
