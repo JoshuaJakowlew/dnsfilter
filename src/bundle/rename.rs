@@ -1,18 +1,8 @@
-use thiserror::Error;
-
 use std::{fs::{self, OpenOptions}, io, path::{Path, PathBuf}};
 
+use crate::bundle::Result;
+use crate::bundle::SELF_EXE;
 use crate::bundle::blob::Bundle;
-
-#[derive(Error, Debug)]
-pub enum Error {
-    #[error("Failed to readlink: {0}")]
-    Io(#[from] std::io::Error),
-}
-
-pub type Result<T> = std::result::Result<T, Error>;
-
-const SELF_EXE: &str = "/proc/self/exe";
 
 pub fn attach_bundle(bundle: Bundle) -> Result<()> {
     let tmp = copy_self()?;
