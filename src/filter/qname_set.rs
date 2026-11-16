@@ -48,6 +48,10 @@ impl QnamePool {
             offset: 0,
         }
     }
+
+    pub fn as_bytes(&self) -> &[u8] {
+        &self.buffer
+    }
 }
 
 pub struct QnamePoolIter<'a> {

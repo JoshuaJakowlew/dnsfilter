@@ -13,6 +13,7 @@ mod filter;
 mod forwarder;
 mod trans;
 mod cli;
+mod bundle;
 
 #[derive(Error, Debug)]
 enum Error {
