@@ -24,27 +24,41 @@ An error on a single packet is printed to stdout and does not stop the process. 
 
 ```sh
 cargo build --release
-./target/release/dnsfilter -f blocklist.txt -p 53 -r 1.1.1.1:53
+./target/release/dnsfilter serve -f blocklist.txt -p 53 -r 1.1.1.1:53
 ```
 
 It listens on `0.0.0.0`, all IPv4 interfaces. No IPv6 socket is opened. `AAAA` queries are still handled normally: the transport to the client is IPv4 UDP, and the record type belongs to the answer.
 
 On Linux, port 53 usually needs root or the `CAP_NET_BIND_SERVICE` capability. For a trial, a free port such as 5353 is easier, with the same port set as the client's DNS.
 
-At startup the file is read in full and the number of loaded names is printed to stdout. The file is not reread while the process is running. A new list takes effect after a restart.
+At startup the domain list is loaded and the number of names is printed to stdout. With `-f` the list is read from that file. Without it, the list attached to this executable is used. The list is not reread while the process is running. A new list takes effect after a restart.
 
-Full flag list: `dnsfilter --help`.
+Full flag list: `dnsfilter --help` and `dnsfilter <command> --help`.
+
+To attach the list to the binary:
+
+```sh
+./target/release/dnsfilter bundle -f blocklist.txt
+./target/release/dnsfilter serve -p 53 -r 1.1.1.1:53
+```
 
 ## Arguments
 
-All three are required.
+`serve` and `bundle` are subcommands. `--port` and `--remote-addr` are required for `serve`. `--filter-path` is required for `bundle` and optional for `serve`.
 
+### serve
 
 | Flag                  | Value                                                                                 |
 | --------------------- | ------------------------------------------------------------------------------------- |
-| `-f`, `--filter-path` | path to the file of blocked domains                                                   |
+| `-f`, `--filter-path` | path to the file of blocked domains; omitted means the bundle attached to this executable |
 | `-p`, `--port`        | local UDP port                                                                        |
 | `-r`, `--remote-addr` | upstream DNS address including the port, for example `9.9.9.9:53` or `192.168.1.1:53` |
+
+### bundle
+
+| Flag                  | Value                               |
+| --------------------- | ----------------------------------- |
+| `-f`, `--filter-path` | path to the file of blocked domains |
 
 
 The upstream address is an ordinary resolver: a router, the ISP, or a public server. dnsfilter does not recurse.
