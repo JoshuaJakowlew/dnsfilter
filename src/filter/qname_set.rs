@@ -129,6 +129,10 @@ impl QnameSet {
         self.pool.len()
     }
 
+    pub fn pool(&self) -> &QnamePool {
+        &self.pool
+    }
+
     pub fn contains(&self, name: &Qname) -> bool {
         let hash = hash_qname(name);
         self.table

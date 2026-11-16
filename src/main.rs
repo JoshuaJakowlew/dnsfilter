@@ -1,4 +1,5 @@
 use std::net::SocketAddr;
+use std::path::Path;
 use thiserror::Error;
 use tokio::signal::unix::{SignalKind, signal};
 
@@ -25,6 +26,8 @@ enum Error {
     ParseError(#[from] dns::parser::ParseError),
     #[error("Failed to make filter")]
     FilterError(#[from] filter::loader::Error),
+    #[error("Bundle: {0}")]
+    Bundle(#[from] bundle::Error),
 }
 
 type Result<T> = std::result::Result<T, Error>;
@@ -120,15 +123,41 @@ async fn handle_response(
     link.forward_response(len, trans.addr).await
 }
 
+fn load_filter(path: Option<&Path>) -> Result<QnameSet> {
+    let filter = match path {
+        Some(path) => DomainFileLoader::from_file(path)?,
+        None => {
+            let pool = bundle::load()?;
+            QnameSet::try_from_pool(pool)
+                .ok_or(bundle::Error::Corrupted)?
+        }
+    };
+
+    println!("Loaded {} domains", filter.len());
+    Ok(filter)
+}
+
+fn attach_filter(path: &Path) -> Result<()> {
+    let filter = DomainFileLoader::from_file(path)?;
+    bundle::attach(filter.pool())?;
+    println!("Attached {} domains", filter.len());
+    Ok(())
+}
+
 #[tokio::main(flavor = "current_thread")]
 async fn main() -> Result<()> {
     let args: cli::Args = argh::from_env();
+    match args.cmd {
+        cli::Command::Bundle(args) => attach_filter(&args.filter_path),
+        cli::Command::Serve(args) => serve(args).await,
+    }
+}
 
+async fn serve(args: cli::ServeArgs) -> Result<()> {
     let forwarder = Forwarder::bind(args.port).await?;
     forwarder.connect(args.remote_addr).await?;
 
-    let filter = DomainFileLoader::from_file(&args.filter_path)?;
-    println!("Loaded {} domains from file", filter.len());
+    let filter = load_filter(args.filter_path.as_deref())?;
 
     let mut forward_link = ForwardLink { forwarder: &forwarder, buf: [0; 65536] };
     let mut backward_link = BackwardLink { forwarder: &forwarder, buf: [0; 65536] };
