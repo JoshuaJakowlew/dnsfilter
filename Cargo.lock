@@ -32,7 +32,7 @@ checksum = "e5ade012bac4db278517a0132c8c10c6427025868dca16c801087c28d5a411f1"
 
 [[package]]
 name = "dnsfilter"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "argh",
  "hashbrown",
