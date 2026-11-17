@@ -13,7 +13,7 @@ impl CleanupTimer {
         }
     }
 
-    pub fn tick(&mut self) -> impl Future<Output = Instant>{
+    pub fn tick(&mut self) -> impl Future<Output = Instant> {
         self.interval.tick()
     }
 

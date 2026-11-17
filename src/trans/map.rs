@@ -41,6 +41,10 @@ impl TransMap {
     }
 
     pub fn expire_older_than(&mut self, now_ms: u32, max_age_ms: u32) -> usize {
+        if self.occupancy.occupancy() == 0 {
+            return 0;
+        }
+
         let mut count = 0usize;
 
         for c in 0..BITMAP_CHUNKS {
@@ -68,15 +72,11 @@ impl TransMap {
     }
 
     fn read(&self, index: usize) -> Transaction {
-        unsafe {
-            self.origins.get_unchecked(index).assume_init_read()
-        }
+        unsafe { self.origins.get_unchecked(index).assume_init_read() }
     }
 
     fn read_ref(&self, index: usize) -> &Transaction {
-        unsafe {
-            self.origins.get_unchecked(index).assume_init_ref()
-        }
+        unsafe { self.origins.get_unchecked(index).assume_init_ref() }
     }
 
     fn is_expired(trans: &Transaction, now_ms: u32, max_age_ms: u32) -> bool {
@@ -93,6 +93,7 @@ const _: () = assert!(BITMAP_CHUNKS.is_power_of_two());
 
 struct OccupancyBitmap {
     cursor: usize,
+    occupancy: usize,
     chunks: [u64; BITMAP_CHUNKS],
 }
 
@@ -105,8 +106,14 @@ impl OccupancyBitmap {
     fn new() -> Self {
         Self {
             cursor: 0,
+            occupancy: 0,
             chunks: [0; BITMAP_CHUNKS],
         }
+    }
+
+    #[inline(always)]
+    fn occupancy(&self) -> usize {
+        self.occupancy
     }
 
     #[inline(always)]
@@ -125,14 +132,14 @@ impl OccupancyBitmap {
             None
         }
     }
-    
+
     #[inline(always)]
     fn find_free(&mut self) -> Option<usize> {
         const CHUNK_INDEX_MASK: usize = BITMAP_CHUNKS - 1;
 
         let start = self.cursor;
         let mut i = start;
-        
+
         loop {
             let free_bit = self.chunk(i).trailing_ones();
             if free_bit < u64::BITS {
@@ -159,6 +166,7 @@ impl OccupancyBitmap {
         unsafe {
             *self.chunks.get_unchecked_mut(chunk) |= mask;
         }
+        self.occupancy += 1;
     }
 
     #[inline(always)]
@@ -167,6 +175,7 @@ impl OccupancyBitmap {
         unsafe {
             *self.chunks.get_unchecked_mut(chunk) &= !mask;
         }
+        self.occupancy -= 1;
     }
 
     #[inline(always)]
